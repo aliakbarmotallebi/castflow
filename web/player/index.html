@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Castflow Player</title>
+  <link href="https://cdn.jsdelivr.net/npm/video.js@8.16.1/dist/video-js.min.css" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1D1B1B; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+    .wrap { width: 100%; max-width: 960px; padding: 16px; }
+    .title { color: #00A3A0; margin-bottom: 12px; font-size: 1rem; }
+    .video-js { width: 100%; aspect-ratio: 16/9; }
+    .vjs-big-play-button { background-color: #038A83 !important; border-color: #038A83 !important; }
+    .error { color: #ff6b6b; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="title" class="title"></div>
+    <video id="player" class="video-js vjs-big-play-centered" controls preload="auto" playsinline></video>
+    <div id="error" class="error" style="display:none"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/video.js@8.16.1/dist/video.min.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const configURL = params.get('config');
+
+    if (!configURL) {
+      showError('پارامتر config الزامی است. مثال: ?config=https://cdn.example.com/v/{id}/config.json');
+    } else {
+      loadPlayer(configURL);
+    }
+
+    function showError(msg) {
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = msg;
+    }
+
+    async function loadPlayer(url) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('config load failed: ' + res.status);
+        const cfg = await res.json();
+
+        if (cfg.title) {
+          document.getElementById('title').textContent = cfg.title;
+        }
+
+        const hls = (cfg.source || []).find(s => s.type === 'application/x-mpegURL');
+        if (!hls) throw new Error('HLS source not found in config');
+
+        const player = videojs('player', {
+          poster: cfg.poster || undefined,
+          sources: [{ src: hls.src, type: hls.type }],
+          fluid: true,
+          html5: { vhs: { overrideNative: !videojs.browser.IS_SAFARI } },
+        });
+
+        player.on('error', () => showError('خطا در پخش ویدیو'));
+      } catch (e) {
+        showError(e.message);
+      }
+    }
+  </script>
+</body>
+</html>

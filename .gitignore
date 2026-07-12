@@ -1,0 +1,14 @@
+# Dependencies & build
+bin/
+data/
+
+# Environment
+.env
+
+# Media artifacts (dev)
+*.mp4
+*.ts
+*.m4s
+
+# OS
+.DS_Store
