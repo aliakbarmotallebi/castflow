@@ -19,17 +19,18 @@ const (
 
 // Video is the core aggregate for a VOD asset.
 type Video struct {
-	ID           uuid.UUID
-	Title        string
-	Description  string
-	Status       VideoStatus
-	DurationSec  int
-	FileSize     int64
-	ContentType  string
-	OriginKey    string
-	ErrorMessage string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              uuid.UUID
+	Title           string
+	Description     string
+	Status          VideoStatus
+	DurationSec     int
+	FileSize        int64
+	ContentType     string
+	OriginKey       string
+	PlaybackVariant string
+	ErrorMessage    string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // NewVideo creates a video in uploading state.

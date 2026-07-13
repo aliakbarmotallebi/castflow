@@ -101,10 +101,13 @@ func (uc *ProcessVideo) Execute(ctx context.Context, videoID uuid.UUID, qualitie
 		return err
 	}
 
+	variant := domain.BuildPlaybackVariant(qualities)
+
 	output, err := uc.transcoder.Process(ctx, domain.TranscodeInput{
 		VideoID:            videoID.String(),
 		InputPath:          originPath,
 		OutputDir:          workDir,
+		Variant:            variant,
 		Qualities:          qualities,
 		ThumbnailAtSec:     thumbAt,
 		TooltipIntervalSec: tooltipInterval,
@@ -115,7 +118,8 @@ func (uc *ProcessVideo) Execute(ctx context.Context, videoID uuid.UUID, qualitie
 		return err
 	}
 
-	if err := uc.uploadArtifacts(ctx, videoID.String(), workDir, output); err != nil {
+	video.PlaybackVariant = variant
+	if err := uc.uploadArtifacts(ctx, videoID.String(), workDir, variant, output); err != nil {
 		video.MarkError(err.Error())
 		_ = uc.repo.Update(ctx, video)
 		return err
@@ -153,8 +157,8 @@ func (uc *ProcessVideo) downloadToFile(ctx context.Context, key, dest string) er
 	return nil
 }
 
-func (uc *ProcessVideo) uploadArtifacts(ctx context.Context, videoID, workDir string, output *domain.TranscodeOutput) error {
-	keys := domain.StorageKeys(videoID)
+func (uc *ProcessVideo) uploadArtifacts(ctx context.Context, videoID, workDir, variant string, output *domain.TranscodeOutput) error {
+	keys := domain.StorageKeysWithVariant(videoID, variant)
 	uploads := []struct {
 		key  string
 		path string
@@ -173,12 +177,12 @@ func (uc *ProcessVideo) uploadArtifacts(ctx context.Context, videoID, workDir st
 		}
 	}
 
-	hlsDir := filepath.Join(workDir, "hls")
-	if err := uc.uploadDir(ctx, filepath.Join(keys.Prefix, "hls"), hlsDir); err != nil {
+	hlsDir := filepath.Join(workDir, "hls", variant)
+	if err := uc.uploadDir(ctx, filepath.Join(keys.Prefix, "hls", variant), hlsDir); err != nil {
 		return err
 	}
-	dashDir := filepath.Join(workDir, "dash")
-	return uc.uploadDir(ctx, filepath.Join(keys.Prefix, "dash"), dashDir)
+	dashDir := filepath.Join(workDir, "dash", variant)
+	return uc.uploadDir(ctx, filepath.Join(keys.Prefix, "dash", variant), dashDir)
 }
 
 func (uc *ProcessVideo) uploadFile(ctx context.Context, key, path, contentType string) error {
@@ -245,7 +249,7 @@ func (uc *GetVideoLinks) Execute(ctx context.Context, id uuid.UUID) (*LinksOutpu
 	if err != nil {
 		return nil, err
 	}
-	links := uc.urlBuilder.BuildLinks(video.ID.String(), video.Title)
+	links := uc.urlBuilder.BuildLinksForVideo(video)
 	return &LinksOutput{Video: video, Links: links, Status: string(video.Status)}, nil
 }
 

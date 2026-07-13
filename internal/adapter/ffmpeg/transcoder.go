@@ -65,8 +65,8 @@ func (t *Transcoder) Process(ctx context.Context, input domain.TranscodeInput) (
 		return nil, fmt.Errorf("no quality profiles configured")
 	}
 
-	hlsDir := filepath.Join(input.OutputDir, "hls")
-	dashDir := filepath.Join(input.OutputDir, "dash")
+	hlsDir := filepath.Join(input.OutputDir, "hls", input.Variant)
+	dashDir := filepath.Join(input.OutputDir, "dash", input.Variant)
 	if err := os.MkdirAll(hlsDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -95,8 +95,8 @@ func (t *Transcoder) Process(ctx context.Context, input domain.TranscodeInput) (
 
 	return &domain.TranscodeOutput{
 		DurationSec:  duration,
-		HLSMaster:    "hls/master.m3u8",
-		DASHManifest: "dash/manifest.mpd",
+		HLSMaster:    filepath.ToSlash(filepath.Join("hls", input.Variant, "master.m3u8")),
+		DASHManifest: filepath.ToSlash(filepath.Join("dash", input.Variant, "manifest.mpd")),
 		Thumbnail:    "thumbnail.jpg",
 		TooltipVTT:   "tooltip.vtt",
 		TooltipPNG:   "tooltip.png",

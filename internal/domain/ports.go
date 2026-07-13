@@ -34,31 +34,32 @@ type Transcoder interface {
 
 // TranscodeInput holds paths for a transcode job.
 type TranscodeInput struct {
-	VideoID    string
-	InputPath  string
-	OutputDir  string
-	Qualities  []QualityProfile
-	ThumbnailAtSec float64
+	VideoID            string
+	InputPath          string
+	OutputDir          string
+	Variant            string
+	Qualities          []QualityProfile
+	ThumbnailAtSec     float64
 	TooltipIntervalSec float64
 }
 
 // QualityProfile defines one rendition.
 type QualityProfile struct {
-	Name       string // e.g. "360p"
-	Width      int
-	Height     int
+	Name         string // e.g. "360p"
+	Width        int
+	Height       int
 	VideoBitrate string // e.g. "800k"
 	AudioBitrate string // e.g. "96k"
 }
 
 // TranscodeOutput reports generated artifact paths (relative to output dir).
 type TranscodeOutput struct {
-	DurationSec int
-	HLSMaster   string
+	DurationSec  int
+	HLSMaster    string
 	DASHManifest string
-	Thumbnail   string
-	TooltipVTT  string
-	TooltipPNG  string
+	Thumbnail    string
+	TooltipVTT   string
+	TooltipPNG   string
 }
 
 // JobQueue enqueues background transcode jobs.

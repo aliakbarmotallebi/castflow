@@ -143,9 +143,9 @@ type querier interface {
 
 func saveVideo(ctx context.Context, q querier, v *domain.Video) error {
 	_, err := q.ExecContext(ctx, `
-		INSERT INTO videos (id, title, description, status, duration_sec, file_size, content_type, origin_key, error_message, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		v.ID, v.Title, v.Description, v.Status, v.DurationSec, v.FileSize, v.ContentType, v.OriginKey, v.ErrorMessage, v.CreatedAt, v.UpdatedAt,
+		INSERT INTO videos (id, title, description, status, duration_sec, file_size, content_type, origin_key, playback_variant, error_message, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		v.ID, v.Title, v.Description, v.Status, v.DurationSec, v.FileSize, v.ContentType, v.OriginKey, v.PlaybackVariant, v.ErrorMessage, v.CreatedAt, v.UpdatedAt,
 	)
 	return err
 }
@@ -153,8 +153,8 @@ func saveVideo(ctx context.Context, q querier, v *domain.Video) error {
 func updateVideo(ctx context.Context, q querier, v *domain.Video) error {
 	_, err := q.ExecContext(ctx, `
 		UPDATE videos SET title=$2, description=$3, status=$4, duration_sec=$5, file_size=$6,
-		content_type=$7, origin_key=$8, error_message=$9, updated_at=$10 WHERE id=$1`,
-		v.ID, v.Title, v.Description, v.Status, v.DurationSec, v.FileSize, v.ContentType, v.OriginKey, v.ErrorMessage, time.Now().UTC(),
+		content_type=$7, origin_key=$8, playback_variant=$9, error_message=$10, updated_at=$11 WHERE id=$1`,
+		v.ID, v.Title, v.Description, v.Status, v.DurationSec, v.FileSize, v.ContentType, v.OriginKey, v.PlaybackVariant, v.ErrorMessage, time.Now().UTC(),
 	)
 	return err
 }

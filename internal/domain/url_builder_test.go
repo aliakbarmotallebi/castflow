@@ -45,3 +45,13 @@ func TestStorageKeys(t *testing.T) {
 		t.Errorf("hls master: %s", keys.HLSMaster)
 	}
 }
+
+func TestStorageKeysWithVariant(t *testing.T) {
+	keys := StorageKeysWithVariant("vid-1", "h_,360_800,k__deadbeef")
+	if keys.HLSMaster != "v/vid-1/hls/h_,360_800,k__deadbeef/master.m3u8" {
+		t.Errorf("hls master: %s", keys.HLSMaster)
+	}
+	if keys.DASHManifest != "v/vid-1/dash/h_,360_800,k__deadbeef/manifest.mpd" {
+		t.Errorf("dash manifest: %s", keys.DASHManifest)
+	}
+}

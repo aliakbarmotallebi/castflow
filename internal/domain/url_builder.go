@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"strings"
 )
 
 // URLBuilder generates public playback URLs on custom domains.
 type URLBuilder struct {
-	CDNBase          string
-	PlayerBase       string
-	PlayerQualities  []string
+	CDNBase         string
+	PlayerBase      string
+	PlayerQualities []string
 }
 
 // NewURLBuilder creates a URL builder from CDN and player base URLs.
@@ -22,6 +23,22 @@ func (b *URLBuilder) videoBase(videoID string) string {
 	return fmt.Sprintf("%s/v/%s", trimRightSlash(b.CDNBase), videoID)
 }
 
+func (b *URLBuilder) hlsURL(videoID, variant string) string {
+	base := b.videoBase(videoID)
+	if strings.TrimSpace(variant) == "" {
+		return base + "/hls/master.m3u8"
+	}
+	return base + "/hls/" + url.PathEscape(variant) + "/master.m3u8"
+}
+
+func (b *URLBuilder) dashURL(videoID, variant string) string {
+	base := b.videoBase(videoID)
+	if strings.TrimSpace(variant) == "" {
+		return base + "/dash/manifest.mpd"
+	}
+	return base + "/dash/" + url.PathEscape(variant) + "/manifest.mpd"
+}
+
 // BuildLinks generates all playback URLs for a video.
 func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	base := b.videoBase(videoID)
@@ -31,8 +48,8 @@ func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	return PlaybackLinks{
 		VideoID:    videoID,
 		Title:      title,
-		HLS:        base + "/hls/master.m3u8",
-		DASH:       base + "/dash/manifest.mpd",
+		HLS:        b.hlsURL(videoID, ""),
+		DASH:       b.dashURL(videoID, ""),
 		Config:     config,
 		Player:     player,
 		Thumbnail:  base + "/thumbnail.jpg",
@@ -42,9 +59,17 @@ func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	}
 }
 
+// BuildLinksForVideo generates playback URLs using the video's stored playback variant.
+func (b *URLBuilder) BuildLinksForVideo(video *Video) PlaybackLinks {
+	links := b.BuildLinks(video.ID.String(), video.Title)
+	links.HLS = b.hlsURL(video.ID.String(), video.PlaybackVariant)
+	links.DASH = b.dashURL(video.ID.String(), video.PlaybackVariant)
+	return links
+}
+
 // BuildPlayerConfig creates the JSON config consumed by the player page.
 func (b *URLBuilder) BuildPlayerConfig(video *Video) PlayerConfig {
-	links := b.BuildLinks(video.ID.String(), video.Title)
+	links := b.BuildLinksForVideo(video)
 	var desc *string
 	if video.Description != "" {
 		desc = &video.Description
@@ -69,7 +94,20 @@ func (b *URLBuilder) BuildPlayerConfig(video *Video) PlayerConfig {
 func StorageKeys(videoID string) struct {
 	Prefix, Origin, Config, Thumbnail, TooltipVTT, TooltipPNG, HLSMaster, DASHManifest string
 } {
+	return StorageKeysWithVariant(videoID, "")
+}
+
+func StorageKeysWithVariant(videoID, variant string) struct {
+	Prefix, Origin, Config, Thumbnail, TooltipVTT, TooltipPNG, HLSMaster, DASHManifest string
+} {
 	prefix := fmt.Sprintf("v/%s", videoID)
+	v := strings.TrimSpace(variant)
+	hlsMaster := prefix + "/hls/master.m3u8"
+	dashManifest := prefix + "/dash/manifest.mpd"
+	if v != "" {
+		hlsMaster = prefix + "/hls/" + v + "/master.m3u8"
+		dashManifest = prefix + "/dash/" + v + "/manifest.mpd"
+	}
 	return struct {
 		Prefix, Origin, Config, Thumbnail, TooltipVTT, TooltipPNG, HLSMaster, DASHManifest string
 	}{
@@ -79,8 +117,8 @@ func StorageKeys(videoID string) struct {
 		Thumbnail:    prefix + "/thumbnail.jpg",
 		TooltipVTT:   prefix + "/tooltip.vtt",
 		TooltipPNG:   prefix + "/tooltip.png",
-		HLSMaster:    prefix + "/hls/master.m3u8",
-		DASHManifest: prefix + "/dash/manifest.mpd",
+		HLSMaster:    hlsMaster,
+		DASHManifest: dashManifest,
 	}
 }
 

@@ -45,7 +45,7 @@ func (r *VideoRepository) Update(ctx context.Context, v *domain.Video) error {
 
 func (r *VideoRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Video, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, error_message, created_at, updated_at
+		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, playback_variant, error_message, created_at, updated_at
 		FROM videos WHERE id=$1`, id)
 	v, err := scanVideo(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -60,7 +60,7 @@ func (r *VideoRepository) List(ctx context.Context, limit, offset int) ([]*domai
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, error_message, created_at, updated_at
+		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, playback_variant, error_message, created_at, updated_at
 		FROM videos ORDER BY created_at DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -92,7 +92,7 @@ func (r *VideoRepository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *VideoRepository) FindByStatus(ctx context.Context, status domain.VideoStatus, limit int) ([]*domain.Video, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, error_message, created_at, updated_at
+		SELECT id, title, description, status, duration_sec, file_size, content_type, origin_key, playback_variant, error_message, created_at, updated_at
 		FROM videos WHERE status=$1 ORDER BY created_at ASC LIMIT $2`, status, limit)
 	if err != nil {
 		return nil, err
@@ -116,6 +116,6 @@ type scannable interface {
 
 func scanVideo(row scannable) (*domain.Video, error) {
 	var v domain.Video
-	err := row.Scan(&v.ID, &v.Title, &v.Description, &v.Status, &v.DurationSec, &v.FileSize, &v.ContentType, &v.OriginKey, &v.ErrorMessage, &v.CreatedAt, &v.UpdatedAt)
+	err := row.Scan(&v.ID, &v.Title, &v.Description, &v.Status, &v.DurationSec, &v.FileSize, &v.ContentType, &v.OriginKey, &v.PlaybackVariant, &v.ErrorMessage, &v.CreatedAt, &v.UpdatedAt)
 	return &v, err
 }
