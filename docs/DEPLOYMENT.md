@@ -8,23 +8,27 @@
 | `cdn.example.com` | Nginx → S3 bucket (RustFS, AWS S3, …) |
 | `player.example.com` | Nginx → Castflow `/player` or static |
 
-## Environment
+## Environment (`.env`)
+
+Postgres and Redis URLs are set in `deploy/docker-compose.yml` for Docker — do not duplicate them in `.env`.
 
 ```env
+# Dev
+CASTFLOW_BASE_URL=http://localhost:8080
+
+# Production (separate domains)
+CASTFLOW_API_BASE_URL=https://api.example.com
 CASTFLOW_CDN_BASE_URL=https://cdn.example.com
 CASTFLOW_PLAYER_BASE_URL=https://player.example.com
-CASTFLOW_API_BASE_URL=https://api.example.com
 
-# S3-compatible storage (RustFS example)
+# S3-compatible storage (RustFS in Docker: use rustfs:9000)
 CASTFLOW_STORAGE_DRIVER=s3
-CASTFLOW_S3_ENDPOINT=rustfs.internal:9000
+CASTFLOW_S3_ENDPOINT=rustfs:9000
 CASTFLOW_S3_BUCKET=castflow-vod
 CASTFLOW_S3_ACCESS_KEY=your-access-key
 CASTFLOW_S3_SECRET_KEY=your-secret-key
-CASTFLOW_S3_USE_SSL=true
+CASTFLOW_S3_USE_SSL=false
 
-# Queue (Asynq on Redis)
-CASTFLOW_REDIS_URL=redis://redis.internal:6379/0
 CASTFLOW_ENABLE_EMBEDDED_WORKER=false
 CASTFLOW_WORKER_CONCURRENCY=2
 ```

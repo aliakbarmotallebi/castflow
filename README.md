@@ -13,18 +13,14 @@ Self-hosted VOD platform written in Go. Upload videos, transcode to HLS/DASH, an
 - Job queue: **Asynq** on Redis (with **Asynqmon** UI)
 - Storage: local filesystem or S3-compatible (RustFS, AWS S3, …)
 
-## Quick start (Docker — recommended)
+## Quick start
 
 ```bash
 cd castflow
 make install
 ```
 
-This will:
-1. Create `.env` from `deploy/.env.docker.example`
-2. Build the `castflow` Docker image
-3. Start Postgres, Redis, Asynqmon, RustFS, Castflow API, and `castflow-worker`
-4. Run database migrations
+Creates `.env` from `deploy/.env.docker.example`. Edit `.env` for app settings; Postgres/Redis stay in `docker-compose.yml`.
 
 | URL | Description |
 |-----|-------------|
@@ -32,7 +28,6 @@ This will:
 | http://localhost:8080/api/v1/videos | List videos |
 | http://localhost:8080/player/index.html | Embedded player |
 | http://localhost:3000 | Asynqmon (queue UI) |
-| http://localhost:9001 | RustFS console (optional S3) |
 
 ```bash
 make docker-logs    # follow API logs
@@ -40,26 +35,20 @@ make docker-down    # stop (keep data)
 make uninstall      # stop + remove volumes
 ```
 
-## Quick start (local Go)
+### `.env` essentials
 
-```bash
-cp .env.example .env
-make docker-deps    # Postgres, Redis, RustFS, Asynqmon
-make migrate-local
-make run            # API + embedded worker (default)
+```env
+# Dev — one URL, CDN/player derived automatically
+CASTFLOW_BASE_URL=http://localhost:8080
+CASTFLOW_API_KEY=dev-secret-key
+
+# Production — uncomment separate domains if needed:
+# CASTFLOW_API_BASE_URL=https://api.example.com
+# CASTFLOW_CDN_BASE_URL=https://cdn.example.com
+# CASTFLOW_PLAYER_BASE_URL=https://player.example.com
 ```
 
-Default API key: `dev-secret-key` (set `CASTFLOW_API_KEY` in `.env` for production).
-
-### Separate worker (local)
-
-```bash
-# Terminal 1 — API only
-CASTFLOW_ENABLE_EMBEDDED_WORKER=false make run
-
-# Terminal 2 — worker
-make run-worker
-```
+See `deploy/.env.docker.example` for storage, FFmpeg, worker, and outbox options.
 
 ## Stack overview
 
@@ -74,16 +63,9 @@ make run-worker
 
 **Queue:** Asynq queue `castflow`, task type `transcode`. Monitor jobs at http://localhost:3000 (visible after the first upload).
 
-**Storage:** Docker defaults to **local** volumes (`CASTFLOW_STORAGE_DRIVER=local`). RustFS runs in the stack but is only used when you switch to `CASTFLOW_STORAGE_DRIVER=s3` — see `.env.example`.
+**Storage:** Docker defaults to **local** volumes (`CASTFLOW_STORAGE_DRIVER=local`). RustFS runs in the stack but is only used when you switch to `CASTFLOW_STORAGE_DRIVER=s3` — see `deploy/.env.docker.example`.
 
-**Worker modes:**
-
-| Environment | API worker | Transcode runs in |
-|-------------|------------|-------------------|
-| Docker (`make install`) | disabled | `castflow-worker` container |
-| Local (`make run`) | enabled (default) | same process as API |
-
-Set `CASTFLOW_ENABLE_EMBEDDED_WORKER=false` when using `make run-worker` or the Docker worker container.
+Transcoding runs in the `castflow-worker` container (`CASTFLOW_ENABLE_EMBEDDED_WORKER=false`).
 
 ## Makefile commands
 
@@ -94,10 +76,8 @@ Set `CASTFLOW_ENABLE_EMBEDDED_WORKER=false` when using `make run-worker` or the 
 | `make docker-up` | Start all containers |
 | `make docker-restart` | Rebuild and restart API |
 | `make docker-migrate` | Apply SQL migrations |
-| `make docker-deps` | Infra only (for local `make run`) |
-| `make run` | Run API locally |
-| `make run-worker` | Run transcode worker only |
-| `make build` | Build `bin/castflow` and `bin/worker` |
+| `make docker-logs` | Follow API logs |
+| `make build` | Build binaries locally |
 
 ## Upload a video
 
@@ -121,12 +101,12 @@ Response includes `hlsUrl`, `dashUrl`, `playerUrl`, `configUrl`, `thumbnailUrl`,
 
 ## Custom domain (production)
 
-Set in `.env`:
+Uncomment in `.env` (see `deploy/.env.docker.example`):
 
 ```env
+CASTFLOW_API_BASE_URL=https://api.example.com
 CASTFLOW_CDN_BASE_URL=https://cdn.example.com
 CASTFLOW_PLAYER_BASE_URL=https://player.example.com
-CASTFLOW_API_BASE_URL=https://api.example.com
 ```
 
 Point Nginx to your S3 bucket (RustFS, AWS S3, …) for `/v/` paths and to Castflow for `/player/`. See [Deployment](docs/DEPLOYMENT.md).

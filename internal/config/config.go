@@ -59,15 +59,15 @@ type OutboxConfig struct {
 
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
-	cdn := env("CASTFLOW_CDN_BASE_URL", "http://localhost:8080/media")
+	api, cdn, player := resolvePublicURLs()
 	cfg := &Config{
 		HTTPAddr:      env("CASTFLOW_HTTP_ADDR", ":8080"),
 		APIKey:        env("CASTFLOW_API_KEY", "dev-secret-key"),
 		DatabaseURL:   env("CASTFLOW_DATABASE_URL", "postgres://castflow:castflow@localhost:5432/castflow?sslmode=disable"),
 		RedisURL:      env("CASTFLOW_REDIS_URL", "redis://localhost:6379/0"),
 		CDNBaseURL:    cdn,
-		PlayerBaseURL: env("CASTFLOW_PLAYER_BASE_URL", "http://localhost:8080/player"),
-		APIBaseURL:    env("CASTFLOW_API_BASE_URL", "http://localhost:8080"),
+		PlayerBaseURL: player,
+		APIBaseURL:    api,
 		LogLevel:      env("CASTFLOW_LOG_LEVEL", "info"),
 		Storage: StorageConfig{
 			Driver:    env("CASTFLOW_STORAGE_DRIVER", "local"),
