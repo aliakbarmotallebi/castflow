@@ -4,70 +4,185 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Castflow Player</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#038A83', light: '#00A3A0', dark: '#026a65' },
+          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+        },
+      },
+    };
+  </script>
   <link href="https://cdn.jsdelivr.net/npm/video.js@8.16.1/dist/video-js.min.css" rel="stylesheet" />
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #1D1B1B; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
-    .wrap { width: 100%; max-width: 960px; padding: 16px; }
-    .title { color: #00A3A0; margin-bottom: 12px; font-size: 1rem; }
-    .video-js { width: 100%; aspect-ratio: 16/9; }
-    .vjs-big-play-button { background-color: #038A83 !important; border-color: #038A83 !important; }
-    .error { color: #ff6b6b; padding: 24px; text-align: center; }
+    .video-js { background: #0f0f0f; }
+    .video-js .vjs-tech { border-radius: 1rem; }
+    .video-js .vjs-control-bar,
+    .video-js .vjs-big-play-button,
+    .video-js .vjs-loading-spinner,
+    .video-js .vjs-modal-dialog { display: none !important; }
 
-    /* Quality selector */
-    .vjs-quality-menu .vjs-quality-label {
-      font-size: 0.85em;
-      line-height: 2.5em;
-      padding: 0 0.5em;
-      color: #fff;
+    .cf-progress::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 0; height: 0;
     }
-    .vjs-quality-menu .vjs-menu .vjs-menu-content {
-      max-height: 280px;
-    }
-    .vjs-quality-menu .vjs-menu-item.vjs-selected {
-      background-color: #038A83;
+    .cf-progress::-moz-range-thumb {
+      width: 0; height: 0; border: none;
     }
 
-    /* Tooltip sprite preview on progress bar */
-    .vjs-progress-control { position: relative; }
-    .cf-thumb-tooltip {
-      display: none;
-      position: absolute;
-      bottom: 100%;
-      transform: translateX(-50%);
-      margin-bottom: 8px;
-      border: 2px solid #038A83;
-      border-radius: 4px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-      pointer-events: none;
-      z-index: 10;
-      background-color: #000;
-      overflow: hidden;
+    @keyframes cf-fade-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
-    .cf-thumb-tooltip .cf-thumb-time {
-      display: block;
-      text-align: center;
-      font-size: 11px;
-      color: #fff;
-      background: rgba(0, 0, 0, 0.75);
-      padding: 2px 6px;
-    }
-    .cf-thumb-tooltip .cf-thumb-img {
-      display: block;
-      background-repeat: no-repeat;
-    }
+    .cf-menu-enter { animation: cf-fade-in 0.15s ease-out; }
+
+    .cf-controls-hidden .cf-ui { opacity: 0; pointer-events: none; }
+    .cf-shell:hover .cf-ui,
+    .cf-shell.cf-paused .cf-ui,
+    .cf-shell.cf-menu-open .cf-ui { opacity: 1; pointer-events: auto; }
   </style>
 </head>
-<body>
-  <div class="wrap">
-    <div id="title" class="title"></div>
-    <video id="player" class="video-js vjs-big-play-centered" controls preload="auto" playsinline></video>
-    <div id="error" class="error" style="display:none"></div>
+<body class="min-h-screen bg-[#1a1818] flex items-center justify-center p-4 font-sans antialiased">
+
+  <div class="w-full max-w-4xl">
+    <h1 id="title" class="text-brand-light text-sm font-medium mb-3 truncate"></h1>
+
+    <div id="shell" class="cf-shell relative rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10 bg-black aspect-video group">
+      <video id="player" class="video-js w-full h-full" playsinline preload="auto"></video>
+
+      <!-- Center play -->
+      <button id="btn-center-play" type="button"
+        class="cf-ui absolute inset-0 z-10 flex items-center justify-center transition-opacity duration-300"
+        aria-label="پخش">
+        <span class="w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] rounded-full bg-brand/90 backdrop-blur-sm flex items-center justify-center shadow-lg ring-2 ring-white/20 hover:bg-brand hover:scale-105 transition-all">
+          <svg class="w-7 h-7 text-white ms-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </span>
+      </button>
+
+      <!-- Bottom controls -->
+      <div class="cf-ui absolute inset-x-0 bottom-0 z-20 transition-opacity duration-300"
+        dir="ltr">
+        <div class="bg-gradient-to-t from-black/85 via-black/55 to-transparent backdrop-blur-[2px] px-3 sm:px-5 pb-3 sm:pb-4 pt-16">
+
+          <!-- Progress + sprite tooltip -->
+          <div id="progress-wrap" class="relative mb-3 group/prog cursor-pointer h-5 flex items-center">
+            <div id="sprite-tip" class="hidden absolute bottom-full mb-2 -translate-x-1/2 z-30 pointer-events-none">
+              <div class="rounded-lg overflow-hidden ring-2 ring-brand shadow-2xl bg-black">
+                <div id="sprite-time" class="text-[10px] text-center text-white/90 bg-black/80 py-0.5 px-2 font-medium tabular-nums"></div>
+                <div id="sprite-img" class="bg-no-repeat"></div>
+              </div>
+            </div>
+            <div class="relative w-full h-1 rounded-full bg-white/20 group-hover/prog:h-1.5 transition-all">
+              <div id="progress-buffer" class="absolute inset-y-0 left-0 rounded-full bg-white/15 w-0"></div>
+              <div id="progress-played" class="absolute inset-y-0 left-0 rounded-full bg-white w-0"></div>
+            </div>
+            <input id="progress-input" type="range" min="0" max="1000" value="0"
+              class="cf-progress absolute inset-0 w-full h-full opacity-0 cursor-pointer" aria-label="Progress" />
+          </div>
+
+          <!-- Control row -->
+          <div class="flex items-center gap-1 sm:gap-2 text-white text-sm">
+
+            <!-- Left -->
+            <div class="flex items-center gap-0.5 sm:gap-1 shrink-0">
+              <button id="btn-play" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors" data-tip="پخش / توقف">
+                <svg id="icon-play" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <svg id="icon-pause" class="w-5 h-5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              </button>
+              <button id="btn-back" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors" data-tip="۱۰ ثانیه عقب">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12H5.5a.5.5 0 0 0-.4.8l2.7 3.6"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5v9a4.5 4.5 0 1 0-1.8-3.6"/>
+                  <text x="10.5" y="14.5" fill="currentColor" stroke="none" font-size="5.5" font-weight="600" text-anchor="middle">10</text>
+                </svg>
+              </button>
+              <button id="btn-fwd" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors" data-tip="۱۰ ثانیه جلو">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12h3.5a.5.5 0 0 1 .4.8l-2.7 3.6"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 7.5v9a4.5 4.5 0 1 1 1.8-3.6"/>
+                  <text x="13.5" y="14.5" fill="currentColor" stroke="none" font-size="5.5" font-weight="600" text-anchor="middle">10</text>
+                </svg>
+              </button>
+              <span id="time-current" class="text-xs sm:text-sm tabular-nums text-white/90 ps-1 min-w-[2.5rem]">0:00</span>
+            </div>
+
+            <div class="flex-1"></div>
+
+            <!-- Right -->
+            <div class="flex items-center gap-0.5 sm:gap-1 shrink-0">
+              <span id="time-duration" class="text-xs sm:text-sm tabular-nums text-white/60 pe-1 hidden sm:inline">0:00</span>
+
+              <!-- Speed -->
+              <div class="relative cf-dropdown-wrap">
+                <button id="btn-speed" type="button" class="cf-btn px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors text-xs sm:text-sm font-medium tabular-nums min-w-[2.5rem]" data-tip="سرعت پخش">1x</button>
+                <div id="menu-speed" class="cf-menu hidden absolute bottom-full mb-2 end-0 min-w-[5rem] rounded-xl bg-black/90 backdrop-blur-md ring-1 ring-white/10 shadow-xl overflow-hidden cf-menu-enter">
+                  <div class="py-1" id="speed-options"></div>
+                </div>
+              </div>
+
+              <!-- Quality -->
+              <div id="quality-wrap" class="relative cf-dropdown-wrap">
+                <button id="btn-quality" type="button" class="cf-btn px-2.5 py-2 rounded-lg hover:bg-white/10 transition-colors text-xs sm:text-sm font-medium tabular-nums min-w-[3rem]" data-tip="کیفیت ویدیو">Auto</button>
+                <div id="menu-quality" class="cf-menu hidden absolute bottom-full mb-2 end-0 min-w-[6.5rem] rounded-xl bg-black/90 backdrop-blur-md ring-1 ring-white/10 shadow-xl overflow-hidden cf-menu-enter">
+                  <div class="py-1" id="quality-options"></div>
+                </div>
+              </div>
+
+              <!-- Volume -->
+              <div class="relative flex items-center group/vol">
+                <button id="btn-mute" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors" data-tip="صدا">
+                  <svg id="icon-vol" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M11 5 6 9H3v6h3l5 4V5z"/>
+                    <path stroke-linecap="round" d="M15.5 13.5a3.5 3.5 0 0 0 0-5"/>
+                    <path stroke-linecap="round" d="M18 16a6.5 6.5 0 0 0 0-9"/>
+                  </svg>
+                  <svg id="icon-muted" class="w-5 h-5 hidden" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" d="M11 5 6 9H3v6h3l5 4V5z"/>
+                    <path stroke-linecap="round" d="m16 9 4 4m0-4-4 4"/>
+                  </svg>
+                </button>
+                <input id="volume-input" type="range" min="0" max="100" value="100"
+                  class="cf-progress w-0 group-hover/vol:w-16 overflow-hidden transition-all duration-200 h-1 accent-white opacity-0 group-hover/vol:opacity-100 me-1"
+                  aria-label="Volume" />
+              </div>
+
+              <button id="btn-pip" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors hidden sm:block" data-tip="تصویر در تصویر">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <rect x="3" y="5" width="14" height="10" rx="1.5"/>
+                  <rect x="11" y="11" width="10" height="8" rx="1.5" fill="currentColor" fill-opacity=".15"/>
+                </svg>
+              </button>
+
+              <button id="btn-fs" type="button" class="cf-btn p-2 rounded-lg hover:bg-white/10 transition-colors" data-tip="تمام صفحه">
+                <svg id="icon-fs-enter" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                </svg>
+                <svg id="icon-fs-exit" class="w-5 h-5 hidden" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" d="M9 3H5a2 2 0 0 0-2 2v4M21 9V5a2 2 0 0 0-2-2h-4M15 21h4a2 2 0 0 0 2-2v-4M3 15v4a2 2 0 0 0 2 2h4"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p id="error" class="hidden mt-4 text-center text-red-400 text-sm"></p>
   </div>
+
+  <!-- Floating tooltip for buttons -->
+  <div id="btn-tip" class="fixed z-50 pointer-events-none hidden px-2.5 py-1 text-xs font-medium text-white bg-black/90 rounded-lg shadow-lg ring-1 ring-white/10 -translate-x-1/2"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/video.js@8.16.1/dist/video.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-quality-levels@4.1.0/dist/videojs-contrib-quality-levels.min.js"></script>
   <script>
+    const $ = id => document.getElementById(id);
     const params = new URLSearchParams(location.search);
     const configURL = params.get('config');
 
@@ -78,28 +193,146 @@
     }
 
     function showError(msg) {
-      document.getElementById('error').style.display = 'block';
-      document.getElementById('error').textContent = msg;
+      $('error').textContent = msg;
+      $('error').classList.remove('hidden');
+      $('shell').classList.add('hidden');
     }
+
+    /* ── Helpers ─────────────────────────────────────────────────── */
+
+    const QUALITY_HEIGHTS = {
+      '144p': 144, '240p': 240, '360p': 360,
+      '480p': 480, '720p': 720, '1080p': 1080,
+    };
+
+    function resolveAllowedHeights(qualities) {
+      if (!qualities?.length) return [];
+      return qualities.map(q => {
+        if (QUALITY_HEIGHTS[q]) return QUALITY_HEIGHTS[q];
+        const n = parseInt(String(q).replace(/p$/i, ''), 10);
+        return Number.isFinite(n) ? n : null;
+      }).filter(h => h != null);
+    }
+
+    function formatTime(sec) {
+      if (!Number.isFinite(sec) || sec < 0) return '0:00';
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const pad = n => String(n).padStart(2, '0');
+      return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    }
+
+    /* ── Button tooltips ─────────────────────────────────────────── */
+
+    const btnTip = $('btn-tip');
+    document.querySelectorAll('[data-tip]').forEach(btn => {
+      btn.addEventListener('mouseenter', () => {
+        btnTip.textContent = btn.dataset.tip;
+        btnTip.classList.remove('hidden');
+      });
+      btn.addEventListener('mousemove', e => {
+        btnTip.style.left = e.clientX + 'px';
+        btnTip.style.top = (e.clientY - 36) + 'px';
+      });
+      btn.addEventListener('mouseleave', () => btnTip.classList.add('hidden'));
+    });
+
+    /* ── Dropdown menus ──────────────────────────────────────────── */
+
+    let openMenu = null;
+    function toggleMenu(menu) {
+      const wasOpen = openMenu === menu;
+      closeMenus();
+      if (!wasOpen) {
+        menu.classList.remove('hidden');
+        openMenu = menu;
+        $('shell').classList.add('cf-menu-open');
+      }
+    }
+    function closeMenus() {
+      document.querySelectorAll('.cf-menu').forEach(m => m.classList.add('hidden'));
+      openMenu = null;
+      $('shell').classList.remove('cf-menu-open');
+    }
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.cf-dropdown-wrap')) closeMenus();
+    });
+
+    function menuItem(label, active, onClick) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `w-full text-start px-4 py-2 text-sm transition-colors ${
+        active ? 'text-brand-light bg-white/10 font-medium' : 'text-white/80 hover:bg-white/10'
+      }`;
+      btn.textContent = label;
+      btn.addEventListener('click', () => { onClick(); closeMenus(); });
+      return btn;
+    }
+
+    /* ── Sprite VTT ──────────────────────────────────────────────── */
+
+    function parseSpriteVTT(text) {
+      const cues = [];
+      for (const block of text.replace(/\r\n/g, '\n').split(/\n\n+/)) {
+        const lines = block.trim().split('\n');
+        if (lines.length < 2) continue;
+        const timeLine = lines.find(l => l.includes('-->'));
+        const payload = lines[lines.length - 1];
+        if (!timeLine || !payload) continue;
+        const [startStr, endStr] = timeLine.split('-->').map(s => s.trim());
+        const start = parseVTTTime(startStr);
+        const end = parseVTTTime(endStr);
+        if (start === null) continue;
+        const m = payload.match(/^(?:([^#]+)#)?xywh=(\d+),(\d+),(\d+),(\d+)/);
+        if (!m) continue;
+        cues.push({ start, end: end ?? start + 5, image: m[1] || 'tooltip.png', x: +m[2], y: +m[3], w: +m[4], h: +m[5] });
+      }
+      return cues;
+    }
+
+    function parseVTTTime(str) {
+      const m = str.match(/(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?/);
+      if (!m) return null;
+      const h = m[1] ? +m[1] : 0;
+      const ms = m[4] ? +m[4].padEnd(3, '0').slice(0, 3) : 0;
+      return h * 3600 + +m[2] * 60 + +m[3] + ms / 1000;
+    }
+
+    function findCue(cues, time) {
+      for (const c of cues) if (time >= c.start && time < c.end) return c;
+      return cues.length && time >= cues[cues.length - 1].start ? cues[cues.length - 1] : null;
+    }
+
+    function resolveSpriteUrl(vttUrl, imageRef) {
+      if (imageRef?.startsWith('http')) return imageRef;
+      return vttUrl.replace(/[^/]+$/, '') + (imageRef || 'tooltip.png');
+    }
+
+    /* ── Main ────────────────────────────────────────────────────── */
 
     async function loadPlayer(url) {
       try {
         const res = await fetch(url);
-        if (!res.ok) throw new Error('config load failed: ' + res.status);
+        if (!res.ok) throw new Error('بارگذاری config ناموفق: ' + res.status);
         const cfg = await res.json();
 
-        if (cfg.title) {
-          document.getElementById('title').textContent = cfg.title;
-        }
+        if (cfg.title) $('title').textContent = cfg.title;
 
         const hls = (cfg.source || []).find(s => s.type === 'application/x-mpegURL');
-        if (!hls) throw new Error('HLS source not found in config');
+        if (!hls) throw new Error('منبع HLS در config یافت نشد');
 
         const behavior = cfg.behavior || {};
+        const allowedHeights = resolveAllowedHeights(cfg.qualities);
+        let selectedQuality = null;
+        let spriteCues = [];
+
         const player = videojs('player', {
+          controls: false,
           poster: cfg.poster || undefined,
           sources: [{ src: hls.src, type: hls.type }],
-          fluid: true,
+          fluid: false,
+          fill: true,
           autoplay: !!behavior.autostart,
           muted: !!behavior.mute,
           loop: !!behavior.repeat,
@@ -109,73 +342,148 @@
 
         player.on('error', () => showError('خطا در پخش ویدیو'));
 
-        player.ready(() => {
-          setupQualitySelector(player, cfg.qualities);
-          if (cfg.thumbnail) {
-            setupTooltipSprites(player, cfg.thumbnail);
+        const shell = $('shell');
+        const iconPlay = $('icon-play');
+        const iconPause = $('icon-pause');
+        const centerPlay = $('btn-center-play');
+
+        function setPlaying(playing) {
+          iconPlay.classList.toggle('hidden', playing);
+          iconPause.classList.toggle('hidden', !playing);
+          centerPlay.classList.toggle('hidden', playing);
+          shell.classList.toggle('cf-paused', !playing);
+          shell.classList.toggle('cf-controls-hidden', playing);
+        }
+
+        function togglePlay() {
+          player.paused() ? player.play() : player.pause();
+        }
+
+        $('btn-play').addEventListener('click', togglePlay);
+        centerPlay.addEventListener('click', togglePlay);
+        shell.addEventListener('click', e => {
+          if (e.target === shell || e.target.classList.contains('vjs-tech')) togglePlay();
+        });
+
+        player.on('play', () => setPlaying(true));
+        player.on('pause', () => setPlaying(false));
+        player.on('ended', () => setPlaying(false));
+
+        $('btn-back').addEventListener('click', () => player.currentTime(Math.max(0, player.currentTime() - 10)));
+        $('btn-fwd').addEventListener('click', () => player.currentTime(Math.min(player.duration(), player.currentTime() + 10)));
+
+        // Progress
+        const progressPlayed = $('progress-played');
+        const progressInput = $('progress-input');
+        const spriteTip = $('sprite-tip');
+
+        function seekFromInput() {
+          const pct = progressInput.value / 1000;
+          player.currentTime(pct * player.duration());
+        }
+        progressInput.addEventListener('input', seekFromInput);
+
+        const progressWrap = $('progress-wrap');
+        progressWrap.addEventListener('mousemove', e => {
+          const rect = progressWrap.getBoundingClientRect();
+          const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          if (spriteCues.length && player.duration()) {
+            const time = pct * player.duration();
+            const cue = findCue(spriteCues, time);
+            if (cue) {
+              const img = $('sprite-img');
+              spriteTip.classList.remove('hidden');
+              spriteTip.style.left = (pct * 100) + '%';
+              $('sprite-time').textContent = formatTime(time);
+              img.style.width = cue.w + 'px';
+              img.style.height = cue.h + 'px';
+              img.style.backgroundImage = `url("${spriteCues._url}")`;
+              img.style.backgroundPosition = `-${cue.x}px -${cue.y}px`;
+            } else {
+              spriteTip.classList.add('hidden');
+            }
           }
         });
-      } catch (e) {
-        showError(e.message);
-      }
-    }
+        progressWrap.addEventListener('mouseleave', () => spriteTip.classList.add('hidden'));
 
-    /* ── Quality selector ─────────────────────────────────────────── */
+        player.on('timeupdate', () => {
+          const dur = player.duration();
+          const cur = player.currentTime();
+          $('time-current').textContent = formatTime(cur);
+          if (dur) {
+            const pct = (cur / dur) * 100;
+            progressPlayed.style.width = pct + '%';
+            progressInput.value = Math.round((cur / dur) * 1000);
+          }
+        });
+        player.on('loadedmetadata', () => {
+          $('time-duration').textContent = formatTime(player.duration());
+        });
 
-    const QUALITY_HEIGHTS = {
-      '144p': 144, '240p': 240, '360p': 360,
-      '480p': 480, '720p': 720, '1080p': 1080,
-    };
+        // Volume
+        const iconVol = $('icon-vol');
+        const iconMuted = $('icon-muted');
+        const volInput = $('volume-input');
 
-    function resolveAllowedHeights(qualities) {
-      if (!qualities || !qualities.length) return [];
-      return qualities.map(q => {
-        if (QUALITY_HEIGHTS[q]) return QUALITY_HEIGHTS[q];
-        const n = parseInt(String(q).replace(/p$/i, ''), 10);
-        return Number.isFinite(n) ? n : null;
-      }).filter(h => h != null);
-    }
+        function syncVolume() {
+          const v = player.volume();
+          const muted = player.muted();
+          volInput.value = Math.round(v * 100);
+          iconVol.classList.toggle('hidden', muted || v === 0);
+          iconMuted.classList.toggle('hidden', !muted && v > 0);
+        }
+        $('btn-mute').addEventListener('click', () => player.muted(!player.muted()));
+        volInput.addEventListener('input', () => {
+          player.volume(volInput.value / 100);
+          player.muted(false);
+        });
+        player.on('volumechange', syncVolume);
 
-    let selectedQualityHeight = null; // null = auto ABR
+        // Speed
+        const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+        let currentSpeed = 1;
+        const speedOpts = $('speed-options');
+        const btnSpeed = $('btn-speed');
 
-    function setupQualitySelector(player, configuredQualities) {
-      const allowedHeights = resolveAllowedHeights(configuredQualities);
+        speeds.forEach(s => {
+          speedOpts.appendChild(menuItem(s === 1 ? 'عادی (1x)' : s + 'x', s === 1, () => {
+            currentSpeed = s;
+            player.playbackRate(s);
+            btnSpeed.textContent = s === 1 ? '1x' : s + 'x';
+            speedOpts.querySelectorAll('button').forEach((b, i) => {
+              b.className = `w-full text-start px-4 py-2 text-sm transition-colors ${
+                speeds[i] === s ? 'text-brand-light bg-white/10 font-medium' : 'text-white/80 hover:bg-white/10'
+              }`;
+            });
+          }));
+        });
+        $('btn-speed').addEventListener('click', e => { e.stopPropagation(); toggleMenu($('menu-speed')); });
 
-      const MenuButton = videojs.getComponent('MenuButton');
-      const MenuItem = videojs.getComponent('MenuItem');
+        // Quality
+        const btnQuality = $('btn-quality');
+        const qualityOpts = $('quality-options');
+        const qualityWrap = $('quality-wrap');
 
-      class QualityMenuButton extends MenuButton {
-        constructor(p, options) {
-          super(p, options);
-          this.controlText('کیفیت');
-          this.addClass('vjs-quality-menu');
+        function applyQuality(height) {
+          selectedQuality = height;
+          const levels = player.qualityLevels();
+          for (let i = 0; i < levels.length; i++) {
+            const lvl = levels[i];
+            const ok = !allowedHeights.length || allowedHeights.includes(lvl.height);
+            if (!ok) { levels[i].enabled = false; continue; }
+            levels[i].enabled = height === null || lvl.height === height;
+          }
+          btnQuality.textContent = height === null ? 'Auto' : height + 'p';
         }
 
-        createEl() {
-          const el = super.createEl();
-          const label = videojs.dom.createEl('span', { className: 'vjs-quality-label' }, {}, 'خودکار');
-          el.appendChild(label);
-          this.labelEl_ = label;
-          return el;
-        }
+        function rebuildQualityMenu() {
+          qualityOpts.innerHTML = '';
+          qualityOpts.appendChild(menuItem('خودکار', selectedQuality === null, () => {
+            applyQuality(null);
+            rebuildQualityMenu();
+          }));
 
-        createItems() {
-          const items = [];
-          const p = this.player();
-
-          const autoItem = new MenuItem(p, {
-            label: 'خودکار',
-            selectable: true,
-            selected: selectedQualityHeight === null,
-          });
-          autoItem.on('click', () => {
-            selectedQualityHeight = null;
-            applyQualitySelection(p, null, allowedHeights);
-            if (this.labelEl_) this.labelEl_.textContent = 'خودکار';
-          });
-          items.push(autoItem);
-
-          const levels = p.qualityLevels();
+          const levels = player.qualityLevels();
           const seen = new Set();
           const sorted = [];
           for (let i = 0; i < levels.length; i++) {
@@ -187,195 +495,81 @@
           }
           sorted.sort((a, b) => b.height - a.height);
 
-          sorted.forEach(lvl => {
-            const label = formatQualityLabel(lvl);
-            const item = new MenuItem(p, {
-              label,
-              selectable: true,
-              selected: selectedQualityHeight === lvl.height,
-            });
-            const h = lvl.height;
-            item.on('click', () => {
-              selectedQualityHeight = h;
-              applyQualitySelection(p, h, allowedHeights);
-              if (this.labelEl_) this.labelEl_.textContent = h + 'p';
-            });
-            items.push(item);
-          });
-
-          return items;
-        }
-
-        handleClick(event) {
-          this.update();
-          super.handleClick(event);
-        }
-      }
-
-      function applyQualitySelection(p, height, allowed) {
-        const levels = p.qualityLevels();
-        for (let i = 0; i < levels.length; i++) {
-          const lvl = levels[i];
-          const permitted = !allowed.length || allowed.includes(lvl.height);
-          if (!permitted) {
-            levels[i].enabled = false;
-            continue;
+          if (sorted.length <= 1 && allowedHeights.length <= 1) {
+            qualityWrap.classList.add('hidden');
+            return;
           }
-          levels[i].enabled = height === null || lvl.height === height;
-        }
-      }
+          qualityWrap.classList.remove('hidden');
 
-      if (!videojs.getComponent('QualityMenuButton')) {
-        videojs.registerComponent('QualityMenuButton', QualityMenuButton);
-      }
-
-      const controlBar = player.getChild('controlBar');
-      const qualityBtn = controlBar.addChild('QualityMenuButton', {}, controlBar.children().length - 1);
-
-      // Hide menu when only one quality is configured.
-      if (allowedHeights.length === 1) {
-        qualityBtn.hide();
-      }
-
-      const levels = player.qualityLevels();
-      const applyAllowed = () => applyQualitySelection(player, selectedQualityHeight, allowedHeights);
-      levels.on('addqualitylevel', () => {
-        applyAllowed();
-        qualityBtn.update();
-      });
-      player.one('loadedmetadata', applyAllowed);
-    }
-
-    function formatQualityLabel(level) {
-      if (level.height) return level.height + 'p';
-      if (level.width) return level.width + 'w';
-      if (level.bitrate) return Math.round(level.bitrate / 1000) + 'k';
-      return 'کیفیت';
-    }
-
-    /* ── Tooltip sprites (VTT + PNG) ────────────────────────────── */
-
-    async function setupTooltipSprites(player, vttUrl) {
-      let text;
-      try {
-        const res = await fetch(vttUrl);
-        if (!res.ok) return;
-        text = await res.text();
-      } catch {
-        return;
-      }
-
-      const cues = parseSpriteVTT(text);
-      if (!cues.length) return;
-
-      const spriteUrl = resolveSpriteUrl(vttUrl, cues[0].image);
-      const frameW = cues[0].w;
-      const frameH = cues[0].h;
-
-      const progressControl = player.controlBar.progressControl.el();
-      const holder = progressControl.querySelector('.vjs-progress-holder') || progressControl;
-
-      const tip = document.createElement('div');
-      tip.className = 'cf-thumb-tooltip';
-      tip.innerHTML =
-        '<span class="cf-thumb-time"></span>' +
-        '<span class="cf-thumb-img"></span>';
-      holder.appendChild(tip);
-
-      const timeEl = tip.querySelector('.cf-thumb-time');
-      const imgEl = tip.querySelector('.cf-thumb-img');
-      imgEl.style.width = frameW + 'px';
-      imgEl.style.height = frameH + 'px';
-      imgEl.style.backgroundImage = 'url("' + spriteUrl + '")';
-
-      holder.addEventListener('mousemove', (e) => {
-        const rect = holder.getBoundingClientRect();
-        if (!rect.width || !player.duration()) return;
-
-        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const time = pct * player.duration();
-        const cue = findCue(cues, time);
-        if (!cue) {
-          tip.style.display = 'none';
-          return;
+          sorted.forEach(lvl => {
+            const h = lvl.height;
+            qualityOpts.appendChild(menuItem(h + 'p', selectedQuality === h, () => {
+              applyQuality(h);
+              rebuildQualityMenu();
+            }));
+          });
         }
 
-        tip.style.display = 'block';
-        tip.style.left = (pct * 100) + '%';
-        imgEl.style.backgroundPosition = '-' + cue.x + 'px -' + cue.y + 'px';
-        timeEl.textContent = formatTime(time);
-      });
+        $('btn-quality').addEventListener('click', e => { e.stopPropagation(); toggleMenu($('menu-quality')); });
 
-      holder.addEventListener('mouseleave', () => {
-        tip.style.display = 'none';
-      });
-    }
-
-    function resolveSpriteUrl(vttUrl, imageRef) {
-      if (imageRef && /^https?:\/\//.test(imageRef)) return imageRef;
-      const base = vttUrl.replace(/[^/]+$/, '');
-      return base + (imageRef || 'tooltip.png');
-    }
-
-    function parseSpriteVTT(text) {
-      const cues = [];
-      const blocks = text.replace(/\r\n/g, '\n').split(/\n\n+/);
-      for (const block of blocks) {
-        const lines = block.trim().split('\n');
-        if (lines.length < 2) continue;
-        const timeLine = lines.find(l => l.includes('-->'));
-        const payload = lines[lines.length - 1];
-        if (!timeLine || !payload) continue;
-
-        const [startStr, endStr] = timeLine.split('-->').map(s => s.trim());
-        const start = parseVTTTime(startStr);
-        const end = parseVTTTime(endStr);
-        if (start === null) continue;
-
-        const m = payload.match(/^(?:([^#]+)#)?xywh=(\d+),(\d+),(\d+),(\d+)/);
-        if (!m) continue;
-
-        cues.push({
-          start,
-          end: end ?? start + 5,
-          image: m[1] || 'tooltip.png',
-          x: +m[2],
-          y: +m[3],
-          w: +m[4],
-          h: +m[5],
+        player.ready(() => {
+          setPlaying(false);
+          syncVolume();
+          const levels = player.qualityLevels();
+          levels.on('addqualitylevel', () => { applyQuality(selectedQuality); rebuildQualityMenu(); });
+          player.one('loadedmetadata', () => { applyQuality(null); rebuildQualityMenu(); });
         });
-      }
-      return cues;
-    }
 
-    function parseVTTTime(str) {
-      const m = str.match(/(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?/);
-      if (!m) return null;
-      const h = m[1] ? +m[1] : 0;
-      const min = +m[2];
-      const sec = +m[3];
-      const ms = m[4] ? +m[4].padEnd(3, '0').slice(0, 3) : 0;
-      return h * 3600 + min * 60 + sec + ms / 1000;
-    }
+        // PiP
+        const btnPip = $('btn-pip');
+        if (document.pictureInPictureEnabled) {
+          btnPip.addEventListener('click', async () => {
+            try {
+              const el = player.el().querySelector('video');
+              document.pictureInPictureElement ? await document.exitPictureInPicture() : await el.requestPictureInPicture();
+            } catch { /* unsupported */ }
+          });
+        } else {
+          btnPip.classList.add('!hidden');
+        }
 
-    function findCue(cues, time) {
-      for (const cue of cues) {
-        if (time >= cue.start && time < cue.end) return cue;
-      }
-      if (cues.length && time >= cues[cues.length - 1].start) {
-        return cues[cues.length - 1];
-      }
-      return null;
-    }
+        // Fullscreen
+        $('btn-fs').addEventListener('click', () => {
+          if (document.fullscreenElement) document.exitFullscreen();
+          else shell.requestFullscreen?.();
+        });
+        document.addEventListener('fullscreenchange', () => {
+          $('icon-fs-enter').classList.toggle('hidden', !!document.fullscreenElement);
+          $('icon-fs-exit').classList.toggle('hidden', !document.fullscreenElement);
+        });
 
-    function formatTime(sec) {
-      const h = Math.floor(sec / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      const s = Math.floor(sec % 60);
-      if (h > 0) {
-        return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+        // Sprite tooltips
+        if (cfg.thumbnail) {
+          try {
+            const vttRes = await fetch(cfg.thumbnail);
+            if (vttRes.ok) {
+              const text = await vttRes.text();
+              spriteCues = parseSpriteVTT(text);
+              if (spriteCues.length) spriteCues._url = resolveSpriteUrl(cfg.thumbnail, spriteCues[0].image);
+            }
+          } catch { /* optional */ }
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', e => {
+          if (e.target.tagName === 'INPUT') return;
+          switch (e.key) {
+            case ' ': case 'k': e.preventDefault(); togglePlay(); break;
+            case 'ArrowLeft': player.currentTime(player.currentTime() - 10); break;
+            case 'ArrowRight': player.currentTime(player.currentTime() + 10); break;
+            case 'f': shell.requestFullscreen?.(); break;
+            case 'm': player.muted(!player.muted()); break;
+          }
+        });
+
+      } catch (e) {
+        showError(e.message);
       }
-      return m + ':' + String(s).padStart(2, '0');
     }
   </script>
 </body>
