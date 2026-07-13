@@ -1,0 +1,11 @@
+.git
+.history
+bin/
+data/
+.env
+*.mp4
+*.ts
+*.m4s
+deploy/nginx/ssl/
+deploy/nginx/certbot/
+deploy/nginx/conf.d/castflow-ssl.conf

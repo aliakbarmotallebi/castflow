@@ -44,6 +44,8 @@ type TranscodeConfig struct {
 	HLSSegmentSeconds  int
 	ThumbnailAtSec     float64
 	TooltipIntervalSec float64
+	TooltipMaxFrames   int
+	TooltipCols        int
 	TempDir            string
 }
 
@@ -86,6 +88,8 @@ func Load() (*Config, error) {
 			HLSSegmentSeconds:  envInt("CASTFLOW_HLS_SEGMENT_SECONDS", 6),
 			ThumbnailAtSec:     envFloat("CASTFLOW_THUMBNAIL_AT_SEC", 1),
 			TooltipIntervalSec: envFloat("CASTFLOW_TOOLTIP_INTERVAL_SEC", 5),
+			TooltipMaxFrames:   envInt("CASTFLOW_TOOLTIP_MAX_FRAMES", 60),
+			TooltipCols:        envInt("CASTFLOW_TOOLTIP_COLS", 10),
 			TempDir:            env("CASTFLOW_TEMP_DIR", "./data/tmp"),
 			Qualities:          defaultQualities(),
 		},

@@ -13,15 +13,36 @@ import (
 	"castflow/internal/domain"
 )
 
+const (
+	defaultTooltipMaxFrames = 60
+	defaultTooltipCols      = 10
+	tooltipFrameW           = 160
+	tooltipFrameH           = 90
+)
+
 // Transcoder implements domain.Transcoder using FFmpeg CLI.
 type Transcoder struct {
-	ffmpegPath  string
-	ffprobePath string
-	segmentSec  int
+	ffmpegPath       string
+	ffprobePath      string
+	segmentSec       int
+	tooltipMaxFrames int
+	tooltipCols      int
 }
 
-func NewTranscoder(ffmpegPath, ffprobePath string, segmentSec int) *Transcoder {
-	return &Transcoder{ffmpegPath: ffmpegPath, ffprobePath: ffprobePath, segmentSec: segmentSec}
+func NewTranscoder(ffmpegPath, ffprobePath string, segmentSec, tooltipMaxFrames, tooltipCols int) *Transcoder {
+	if tooltipMaxFrames <= 0 {
+		tooltipMaxFrames = defaultTooltipMaxFrames
+	}
+	if tooltipCols <= 0 {
+		tooltipCols = defaultTooltipCols
+	}
+	return &Transcoder{
+		ffmpegPath:       ffmpegPath,
+		ffprobePath:      ffprobePath,
+		segmentSec:       segmentSec,
+		tooltipMaxFrames: tooltipMaxFrames,
+		tooltipCols:      tooltipCols,
+	}
 }
 
 func (t *Transcoder) ProbeDuration(ctx context.Context, inputPath string) (int, error) {
@@ -84,80 +105,135 @@ func (t *Transcoder) Process(ctx context.Context, input domain.TranscodeInput) (
 
 func (t *Transcoder) generateThumbnail(ctx context.Context, input, outDir string, atSec float64) error {
 	dest := filepath.Join(outDir, "thumbnail.jpg")
-	return exec.CommandContext(ctx, t.ffmpegPath,
+	return runFFmpeg(ctx, t.ffmpegPath,
 		"-y", "-ss", fmt.Sprintf("%.2f", atSec),
 		"-i", input, "-vframes", "1", "-q:v", "2", dest,
-	).Run()
+	)
 }
 
 func (t *Transcoder) generateTooltip(ctx context.Context, input, outDir string, interval float64) error {
+	durationSec, err := t.ProbeDuration(ctx, input)
+	if err != nil {
+		return fmt.Errorf("tooltip duration: %w", err)
+	}
+
+	effectiveInterval := tooltipInterval(float64(durationSec), interval, t.tooltipMaxFrames)
+
 	framesDir := filepath.Join(outDir, "tooltip_frames")
 	if err := os.MkdirAll(framesDir, 0o755); err != nil {
 		return err
 	}
 	defer os.RemoveAll(framesDir)
 
-	fps := 1.0 / interval
-	if err := exec.CommandContext(ctx, t.ffmpegPath,
+	framePattern := filepath.Join(framesDir, "frame_%04d.jpg")
+	fps := 1.0 / effectiveInterval
+	if err := runFFmpeg(ctx, t.ffmpegPath,
 		"-y", "-i", input,
-		"-vf", fmt.Sprintf("fps=%.4f,scale=160:90", fps),
-		filepath.Join(framesDir, "frame_%04d.jpg"),
-	).Run(); err != nil {
+		"-vf", fmt.Sprintf("fps=%.4f,scale=%d:%d", fps, tooltipFrameW, tooltipFrameH),
+		framePattern,
+	); err != nil {
 		return fmt.Errorf("tooltip frames: %w", err)
 	}
 
-	entries, err := os.ReadDir(framesDir)
+	frameCount, err := countFrameFiles(framesDir)
 	if err != nil {
 		return err
 	}
-	if len(entries) == 0 {
+	if frameCount == 0 {
 		return fmt.Errorf("no tooltip frames generated")
 	}
+	if frameCount > t.tooltipMaxFrames {
+		frameCount = t.tooltipMaxFrames
+	}
 
+	cols, rows := tooltipGrid(frameCount, t.tooltipCols)
 	spritePath := filepath.Join(outDir, "tooltip.png")
-	// tile: up to 10 columns
-	cols := 10
-	if len(entries) < cols {
-		cols = len(entries)
-	}
-	tileFilter := fmt.Sprintf("tile=%dx", cols)
-	inputs := make([]string, 0, len(entries)*2)
-	for i, e := range entries {
-		inputs = append(inputs, "-i", filepath.Join(framesDir, e.Name()))
-		_ = i
-	}
-	args := append([]string{"-y"}, inputs...)
-	args = append(args, "-filter_complex", fmt.Sprintf("%s%s", buildConcatFilter(len(entries)), tileFilter),
-		"-frames:v", "1", spritePath)
-	if err := exec.CommandContext(ctx, t.ffmpegPath, args...).Run(); err != nil {
+	if err := runFFmpeg(ctx, t.ffmpegPath,
+		"-y",
+		"-framerate", "1",
+		"-start_number", "1",
+		"-i", framePattern,
+		"-frames:v", strconv.Itoa(frameCount),
+		"-vf", fmt.Sprintf("tile=%dx%d", cols, rows),
+		spritePath,
+	); err != nil {
 		return fmt.Errorf("tooltip sprite: %w", err)
 	}
 
-	return writeTooltipVTT(outDir, spritePath, len(entries), interval)
+	return writeTooltipVTT(outDir, frameCount, effectiveInterval, cols)
 }
 
-func buildConcatFilter(n int) string {
-	var parts []string
-	for i := 0; i < n; i++ {
-		parts = append(parts, fmt.Sprintf("[%d:v]", i))
+// tooltipInterval widens the sampling interval for long videos so frame count stays bounded.
+func tooltipInterval(durationSec, requestedInterval float64, maxFrames int) float64 {
+	if requestedInterval <= 0 {
+		requestedInterval = 5
 	}
-	return strings.Join(parts, "") + fmt.Sprintf("concat=n=%d:v=1:a=0[v];[v]", n)
+	if maxFrames <= 0 {
+		maxFrames = defaultTooltipMaxFrames
+	}
+	if durationSec <= 0 {
+		return requestedInterval
+	}
+	if durationSec/requestedInterval <= float64(maxFrames) {
+		return requestedInterval
+	}
+	return durationSec / float64(maxFrames)
 }
 
-func writeTooltipVTT(outDir, spriteURL string, frameCount int, interval float64) error {
+func tooltipGrid(frameCount, maxCols int) (cols, rows int) {
+	if maxCols <= 0 {
+		maxCols = defaultTooltipCols
+	}
+	cols = maxCols
+	if frameCount < cols {
+		cols = frameCount
+	}
+	rows = (frameCount + cols - 1) / cols
+	return cols, rows
+}
+
+func countFrameFiles(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "frame_") && strings.HasSuffix(e.Name(), ".jpg") {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func runFFmpeg(ctx context.Context, ffmpegPath string, args ...string) error {
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+func writeTooltipVTT(outDir string, frameCount int, interval float64, cols int) error {
 	var buf bytes.Buffer
 	buf.WriteString("WEBVTT\n\n")
-	cols := 10
-	w, h := 160, 90
 	for i := 0; i < frameCount; i++ {
 		start := float64(i) * interval
 		end := start + interval
 		col := i % cols
 		row := i / cols
-		x := col * w
-		y := row * h
+		x := col * tooltipFrameW
+		y := row * tooltipFrameH
 		buf.WriteString(fmt.Sprintf("%s --> %s\n", formatVTTTime(start), formatVTTTime(end)))
-		buf.WriteString(fmt.Sprintf("tooltip.png#xywh=%d,%d,%d,%d\n\n", x, y, w, h))
+		buf.WriteString(fmt.Sprintf("tooltip.png#xywh=%d,%d,%d,%d\n\n", x, y, tooltipFrameW, tooltipFrameH))
 	}
 	return os.WriteFile(filepath.Join(outDir, "tooltip.vtt"), buf.Bytes(), 0o644)
 }
@@ -191,7 +267,7 @@ func (t *Transcoder) transcodeHLS(ctx context.Context, input domain.TranscodeInp
 			"-hls_segment_filename", segPattern,
 			playlist,
 		}
-		if err := exec.CommandContext(ctx, t.ffmpegPath, args...).Run(); err != nil {
+		if err := runFFmpeg(ctx, t.ffmpegPath, args...); err != nil {
 			return fmt.Errorf("hls %s: %w", q.Name, err)
 		}
 	}
@@ -242,5 +318,5 @@ func (t *Transcoder) transcodeDASH(ctx context.Context, input domain.TranscodeIn
 		"-seg_duration", strconv.Itoa(t.segmentSec),
 		"-f", "dash", manifest,
 	)
-	return exec.CommandContext(ctx, t.ffmpegPath, args...).Run()
+	return runFFmpeg(ctx, t.ffmpegPath, args...)
 }

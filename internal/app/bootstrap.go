@@ -54,7 +54,13 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 	uploadWriter := postgres.NewUploadWriter(db)
 	outboxRepo := postgres.NewOutboxRepository(db)
 	urlBuilder := domain.NewURLBuilder(cfg.CDNBaseURL, cfg.PlayerBaseURL)
-	transcoder := ffmpeg.NewTranscoder(cfg.Transcode.FFmpegPath, cfg.Transcode.FFprobePath, cfg.Transcode.HLSSegmentSeconds)
+	transcoder := ffmpeg.NewTranscoder(
+		cfg.Transcode.FFmpegPath,
+		cfg.Transcode.FFprobePath,
+		cfg.Transcode.HLSSegmentSeconds,
+		cfg.Transcode.TooltipMaxFrames,
+		cfg.Transcode.TooltipCols,
+	)
 	processUC := application.NewProcessVideo(repo, store, transcoder, urlBuilder, cfg.Transcode.TempDir)
 
 	jobQueue, err := queue.NewAsynq(cfg.RedisURL, cfg.Worker.Concurrency)
