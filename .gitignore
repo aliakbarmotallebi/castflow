@@ -8,6 +8,7 @@ data/
 # TLS certs (place your own in deploy/nginx/ssl/)
 deploy/nginx/ssl/*.pem
 deploy/nginx/conf.d/castflow-ssl.conf
+deploy/nginx/certbot/conf/
 
 # Media artifacts (dev)
 *.mp4

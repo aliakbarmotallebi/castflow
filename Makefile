@@ -29,7 +29,7 @@ CASTFLOW_API_KEY  ?= dev-secret-key
 .PHONY: help install install-build uninstall \
         docker-build docker-up docker-down docker-restart docker-logs docker-ps \
         docker-migrate docker-stop docker-clean env \
-        ssl ssl-init ssl-enable ssl-reload nginx-reload \
+        ssl ssl-init ssl-enable ssl-certbot ssl-reload nginx-reload \
         build test tidy lint
 
 help:
@@ -44,6 +44,7 @@ help:
 	@echo ""
 	@echo "  SSL (certs in deploy/nginx/ssl/, no image rebuild):"
 	@echo "  make ssl            Show SSL setup instructions"
+	@echo "  make ssl-certbot DOMAIN=example.com   Let's Encrypt (production)"
 	@echo "  make ssl-init       Generate self-signed certs (dev)"
 	@echo "  make ssl-enable     Enable HTTPS after placing certs"
 	@echo "  make ssl-reload     Reload nginx after cert change"
@@ -120,16 +121,38 @@ docker-clean:
 
 ssl:
 	@echo ""
-	@echo "Place your TLS certs (no Docker rebuild needed):"
+	@echo "Production (Let's Encrypt):"
+	@echo "  make ssl-certbot DOMAIN=your-domain.com EMAIL=you@example.com"
+	@echo ""
+	@echo "Or place your own certs:"
 	@echo "  $(NGINX_SSL_DIR)/fullchain.pem"
 	@echo "  $(NGINX_SSL_DIR)/privkey.pem"
+	@echo "  make ssl-enable && make ssl-reload"
 	@echo ""
-	@echo "Then enable HTTPS and reload nginx:"
-	@echo "  make ssl-enable"
-	@echo "  make ssl-reload"
-	@echo ""
-	@echo "For local dev with self-signed certs:"
+	@echo "Local dev (self-signed):"
 	@echo "  make ssl-init"
+	@echo ""
+
+ssl-certbot:
+	@test -n "$(DOMAIN)" || (echo "Usage: make ssl-certbot DOMAIN=example.com [EMAIL=you@example.com]" && exit 1)
+	@mkdir -p deploy/nginx/certbot/www deploy/nginx/ssl
+	@$(COMPOSE) up -d nginx
+	@docker run --rm \
+		-v "$(CURDIR)/deploy/nginx/certbot/www:/var/www/certbot" \
+		-v "$(CURDIR)/deploy/nginx/certbot/conf:/etc/letsencrypt" \
+		certbot/certbot certonly --webroot -w /var/www/certbot \
+		-d "$(DOMAIN)" \
+		$(if $(EMAIL),--email "$(EMAIL)",--register-unsafely-without-email) \
+		--agree-tos --no-eff-email
+	@cp "deploy/nginx/certbot/conf/live/$(DOMAIN)/fullchain.pem" "$(NGINX_SSL_DIR)/fullchain.pem"
+	@cp "deploy/nginx/certbot/conf/live/$(DOMAIN)/privkey.pem" "$(NGINX_SSL_DIR)/privkey.pem"
+	@echo "✓ Certs installed for $(DOMAIN)"
+	@$(MAKE) ssl-enable
+	@$(MAKE) ssl-reload
+	@echo ""
+	@echo "Update .env:"
+	@echo "  CASTFLOW_BASE_URL=https://$(DOMAIN)"
+	@echo "Then: make docker-restart"
 	@echo ""
 
 ssl-init:
