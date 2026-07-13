@@ -67,13 +67,25 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      castflow:
+        condition: service_started
+    restart: unless-stopped
+
   castflow:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     image: castflow:latest
-    ports:
-      - "8080:8080"
     env_file:
       - ../.env
     environment:
