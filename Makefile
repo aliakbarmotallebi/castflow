@@ -28,6 +28,7 @@ CASTFLOW_API_KEY  ?= dev-secret-key
 
 .PHONY: help install install-build uninstall \
         docker-build docker-up docker-down docker-restart docker-logs docker-ps \
+        docker-logs-worker docker-logs-nginx docker-logs-all docker-health docker-shell \
         docker-migrate docker-stop docker-clean env \
         ssl ssl-init ssl-enable ssl-certbot ssl-install-certs ssl-reload nginx-reload \
         build test tidy lint
@@ -41,6 +42,8 @@ help:
 	@echo "  make uninstall      Stop and remove volumes"
 	@echo "  make docker-logs    Follow castflow logs"
 	@echo "  make docker-ps      Container status"
+	@echo "  make docker-health  HTTP health checks"
+	@echo "  See docs/DEBUG.md for full Docker debugging guide"
 	@echo ""
 	@echo "  SSL (certs in deploy/nginx/ssl/, no image rebuild):"
 	@echo "  make ssl            Show SSL setup instructions"
@@ -84,7 +87,7 @@ env:
 	fi
 
 docker-build:
-	$(COMPOSE) build castflow
+	$(COMPOSE) build castflow castflow-worker
 
 docker-up:
 	$(COMPOSE) up -d
@@ -95,6 +98,8 @@ docker-up:
 	done
 	@curl -sf "$(CASTFLOW_API_BASE_URL)/health" >/dev/null 2>&1 || \
 		(echo "✗ castflow unhealthy — run: make docker-logs" && exit 1)
+	@$(COMPOSE) ps --status running -q castflow-worker 2>/dev/null | grep -q . || \
+		(echo "⚠ castflow-worker not running — transcode relies on embedded worker in castflow" && true)
 
 docker-down:
 	$(COMPOSE) down
@@ -106,6 +111,29 @@ docker-restart:
 
 docker-logs:
 	$(COMPOSE) logs -f castflow
+
+docker-logs-worker:
+	$(COMPOSE) logs -f castflow-worker
+
+docker-logs-nginx:
+	$(COMPOSE) logs -f nginx
+
+docker-logs-all:
+	$(COMPOSE) logs -f
+
+docker-health:
+	@echo "── Public (via nginx) ──"
+	@curl -sf "$(CASTFLOW_API_BASE_URL)/health" && echo " OK  $(CASTFLOW_API_BASE_URL)/health" || \
+		(echo " FAIL $(CASTFLOW_API_BASE_URL)/health" && exit 1)
+	@echo "── castflow (internal) ──"
+	@$(COMPOSE) exec -T castflow wget -qO- http://127.0.0.1:8080/health && echo " OK  castflow:8080/health" || \
+		echo " FAIL castflow:8080/health"
+	@echo "── services ──"
+	@$(COMPOSE) ps
+
+docker-shell:
+	@test -n "$(SERVICE)" || (echo "Usage: make docker-shell SERVICE=castflow|castflow-worker|nginx|postgres|redis" && exit 1)
+	$(COMPOSE) exec $(SERVICE) sh
 
 docker-ps:
 	$(COMPOSE) ps

@@ -10,6 +10,7 @@ Self-hosted VOD platform written in Go. Upload videos, transcode to HLS/DASH, an
 - Custom CDN and player URLs (`config.json`, iFrame embed)
 - Clean Architecture (domain → application → adapters)
 - Docker Compose for local/production deploy
+- **Nginx** reverse proxy with optional TLS (Let's Encrypt or your own certs)
 - Job queue: **Asynq** on Redis (with **Asynqmon** UI)
 - Storage: local filesystem or S3-compatible (RustFS, AWS S3, …)
 
@@ -17,16 +18,19 @@ Self-hosted VOD platform written in Go. Upload videos, transcode to HLS/DASH, an
 
 ```bash
 cd castflow
-make install
+make install-build   # first time (build image + start + migrate)
+# make install       # later runs — start + migrate only, no rebuild
 ```
 
 Creates `.env` from `deploy/.env.docker.example`. Edit `.env` for app settings; Postgres/Redis stay in `docker-compose.yml`.
 
+Traffic goes through **nginx** on port **80** (and **443** after SSL is enabled). The API container is internal only.
+
 | URL | Description |
 |-----|-------------|
-| http://localhost:8080/health | Health check |
-| http://localhost:8080/api/v1/videos | List videos |
-| http://localhost:8080/player/index.html | Embedded player |
+| http://localhost/health | Health check |
+| http://localhost/api/v1/videos | List videos |
+| http://localhost/player/index.html | Embedded player |
 | http://localhost:3000 | Asynqmon (queue UI) |
 | http://localhost:9001 | RustFS console (storage UI) |
 
@@ -40,10 +44,13 @@ make uninstall      # stop + remove volumes
 
 ```env
 # Dev — one URL, CDN/player derived automatically
-CASTFLOW_BASE_URL=http://localhost:8080
+CASTFLOW_BASE_URL=http://localhost
 CASTFLOW_API_KEY=dev-secret-key
 
-# Production — uncomment separate domains if needed:
+# Production (single domain with HTTPS):
+# CASTFLOW_BASE_URL=https://example.com
+
+# Production (separate domains):
 # CASTFLOW_API_BASE_URL=https://api.example.com
 # CASTFLOW_CDN_BASE_URL=https://cdn.example.com
 # CASTFLOW_PLAYER_BASE_URL=https://player.example.com
@@ -55,7 +62,8 @@ See `deploy/.env.docker.example` for storage, FFmpeg, worker, and outbox options
 
 | Service | Role | Exposed port |
 |---------|------|--------------|
-| `castflow` | HTTP API + player + media | 8080 |
+| `nginx` | Reverse proxy (HTTP/HTTPS) | 80, 443 |
+| `castflow` | HTTP API + player + media | — (internal) |
 | `asynqmon` | Queue dashboard | 3000 |
 | `rustfs` | S3 storage API | 9000 |
 | `rustfs` | Storage console UI | 9001 |
@@ -66,24 +74,54 @@ See `deploy/.env.docker.example` for storage, FFmpeg, worker, and outbox options
 
 **Storage:** Docker defaults to **local** volumes (`CASTFLOW_STORAGE_DRIVER=local`). RustFS runs in the stack but is only used when you switch to `CASTFLOW_STORAGE_DRIVER=s3` — see `deploy/.env.docker.example`.
 
-Transcoding runs in the `castflow-worker` container (`CASTFLOW_ENABLE_EMBEDDED_WORKER=false`).
+Transcoding runs via the Asynq queue: dedicated `castflow-worker` plus an embedded consumer in `castflow` (enabled in `docker-compose.yml` so jobs still process if the worker container is down).
 
 ## Makefile commands
 
 | Command | Description |
 |---------|-------------|
-| `make install` | Full Docker install (build + up + migrate) |
+| `make install` | Start + migrate (no image rebuild) |
+| `make install-build` | Build image + start + migrate (first time / after code changes) |
 | `make uninstall` | Remove stack and volumes |
 | `make docker-up` | Start all containers |
-| `make docker-restart` | Rebuild and restart API |
+| `make docker-restart` | Recreate API, worker, and nginx |
 | `make docker-migrate` | Apply SQL migrations |
 | `make docker-logs` | Follow API logs |
+| `make docker-health` | Health checks (nginx + castflow) |
 | `make build` | Build binaries locally |
+
+See [Docker debugging](docs/DEBUG.md) for logs, shells, and troubleshooting.
+
+### SSL / HTTPS
+
+Certs live in `deploy/nginx/ssl/`. Enabling or renewing TLS only reloads nginx — **no Docker image rebuild**.
+
+| Command | Description |
+|---------|-------------|
+| `make ssl` | Show SSL setup instructions |
+| `make ssl-certbot DOMAIN=example.com EMAIL=you@example.com` | Let's Encrypt via webroot (production) |
+| `make ssl-install-certs DOMAIN=example.com` | Copy existing certbot certs into nginx (after a partial run) |
+| `make ssl-init` | Self-signed certs for local HTTPS |
+| `make ssl-enable` | Enable HTTPS config after placing certs |
+| `make ssl-reload` | Test and reload nginx |
+
+**Production (Let's Encrypt):**
+
+```bash
+make install-build
+make ssl-certbot DOMAIN=example.com EMAIL=you@example.com
+# set CASTFLOW_BASE_URL=https://example.com in .env
+make docker-restart
+```
+
+**Manual certs:** copy `fullchain.pem` and `privkey.pem` to `deploy/nginx/ssl/`, then `make ssl-enable && make ssl-reload`.
+
+See [Deployment](docs/DEPLOYMENT.md) for firewall, renewal, and multi-domain setups.
 
 ## Upload a video
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/videos/upload \
+curl -X POST http://localhost/api/v1/videos/upload \
   -H "X-API-Key: dev-secret-key" \
   -F "title=My Lecture" \
   -F "file=@video.mp4"
@@ -94,7 +132,7 @@ Check transcode progress in Asynqmon: http://localhost:3000
 ## Get playback links
 
 ```bash
-curl http://localhost:8080/api/v1/videos/{id}/links \
+curl http://localhost/api/v1/videos/{id}/links \
   -H "X-API-Key: dev-secret-key"
 ```
 
@@ -102,7 +140,13 @@ Response includes `hlsUrl`, `dashUrl`, `playerUrl`, `configUrl`, `thumbnailUrl`,
 
 ## Custom domain (production)
 
-Uncomment in `.env` (see `deploy/.env.docker.example`):
+Single domain (simplest — built-in nginx handles API, player, and media):
+
+```env
+CASTFLOW_BASE_URL=https://example.com
+```
+
+Separate API / CDN / player domains — uncomment in `.env` (see `deploy/.env.docker.example`):
 
 ```env
 CASTFLOW_API_BASE_URL=https://api.example.com
@@ -110,7 +154,7 @@ CASTFLOW_CDN_BASE_URL=https://cdn.example.com
 CASTFLOW_PLAYER_BASE_URL=https://player.example.com
 ```
 
-Point Nginx to your S3 bucket (RustFS, AWS S3, …) for `/v/` paths and to Castflow for `/player/`. See [Deployment](docs/DEPLOYMENT.md).
+For a separate CDN origin (S3 / RustFS), extend `deploy/nginx/conf.d/`. See [Deployment](docs/DEPLOYMENT.md).
 
 ## Requirements
 
@@ -123,6 +167,7 @@ Point Nginx to your S3 bucket (RustFS, AWS S3, …) for `/v/` paths and to Castf
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Deployment](docs/DEPLOYMENT.md)
+- [Docker debugging](docs/DEBUG.md)
 - [API Reference](docs/API.md)
 
 ## Project structure
@@ -140,6 +185,9 @@ castflow/
 │   └── app/               # Wiring / bootstrap
 ├── migrations/
 ├── deploy/
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── nginx/             # Reverse proxy + TLS (conf.d, ssl/, certbot/)
 ├── web/player/            # Embedded player
 └── docs/
 ```
