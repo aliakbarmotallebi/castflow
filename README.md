@@ -28,6 +28,7 @@ Creates `.env` from `deploy/.env.docker.example`. Edit `.env` for app settings; 
 | http://localhost:8080/api/v1/videos | List videos |
 | http://localhost:8080/player/index.html | Embedded player |
 | http://localhost:3000 | Asynqmon (queue UI) |
+| http://localhost:9001 | RustFS console (storage UI) |
 
 ```bash
 make docker-logs    # follow API logs
@@ -52,14 +53,14 @@ See `deploy/.env.docker.example` for storage, FFmpeg, worker, and outbox options
 
 ## Stack overview
 
-| Service | Role | Host port |
-|---------|------|-----------|
-| `castflow` | HTTP API | 8080 |
-| `castflow-worker` | FFmpeg transcode jobs | — |
-| Redis | Asynq backend | 6380 |
-| Asynqmon | Queue dashboard | 3000 |
-| RustFS | S3-compatible storage (optional) | 9000 / 9001 |
-| Postgres | Video metadata | 5433 |
+| Service | Role | Exposed port |
+|---------|------|--------------|
+| `castflow` | HTTP API + player + media | 8080 |
+| `asynqmon` | Queue dashboard | 3000 |
+| `rustfs` | S3 storage API | 9000 |
+| `rustfs` | Storage console UI | 9001 |
+| `castflow-worker` | FFmpeg transcode | — |
+| Postgres / Redis | Internal only | — |
 
 **Queue:** Asynq queue `castflow`, task type `transcode`. Monitor jobs at http://localhost:3000 (visible after the first upload).
 

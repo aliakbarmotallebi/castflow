@@ -122,10 +122,10 @@ psql $CASTFLOW_DATABASE_URL -f migrations/001_init.sql
 |---------|-----|
 | API | http://localhost:8080 |
 | Asynqmon | http://localhost:3000 |
-| Redis | localhost:6380 |
 | RustFS S3 | http://localhost:9000 |
 | RustFS Console | http://localhost:9001 |
-| Postgres | localhost:5433 |
+
+Postgres and Redis are **not** exposed on the host — containers connect via the Docker network (`postgres:5432`, `redis:6379`).
 
 ## Generated links (example)
 
