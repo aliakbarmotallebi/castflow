@@ -29,7 +29,7 @@ CASTFLOW_API_KEY  ?= dev-secret-key
 .PHONY: help install install-build uninstall \
         docker-build docker-up docker-down docker-restart docker-logs docker-ps \
         docker-migrate docker-stop docker-clean env \
-        ssl ssl-init ssl-enable ssl-certbot ssl-reload nginx-reload \
+        ssl ssl-init ssl-enable ssl-certbot ssl-install-certs ssl-reload nginx-reload \
         build test tidy lint
 
 help:
@@ -144,8 +144,18 @@ ssl-certbot:
 		-d "$(DOMAIN)" \
 		$(if $(EMAIL),--email "$(EMAIL)",--register-unsafely-without-email) \
 		--agree-tos --no-eff-email
-	@cp "deploy/nginx/certbot/conf/live/$(DOMAIN)/fullchain.pem" "$(NGINX_SSL_DIR)/fullchain.pem"
-	@cp "deploy/nginx/certbot/conf/live/$(DOMAIN)/privkey.pem" "$(NGINX_SSL_DIR)/privkey.pem"
+	@$(MAKE) ssl-install-certs DOMAIN="$(DOMAIN)"
+
+ssl-install-certs:
+	@test -n "$(DOMAIN)" || (echo "Usage: make ssl-install-certs DOMAIN=example.com" && exit 1)
+	@docker run --rm \
+		-v "$(CURDIR)/deploy/nginx/certbot/conf:/etc/letsencrypt:ro" \
+		-v "$(CURDIR)/$(NGINX_SSL_DIR):/out" \
+		alpine:3.20 sh -c '\
+			cp "/etc/letsencrypt/live/$(DOMAIN)/fullchain.pem" /out/fullchain.pem && \
+			cp "/etc/letsencrypt/live/$(DOMAIN)/privkey.pem" /out/privkey.pem && \
+			chmod 644 /out/fullchain.pem && \
+			chmod 600 /out/privkey.pem'
 	@echo "✓ Certs installed for $(DOMAIN)"
 	@$(MAKE) ssl-enable
 	@$(MAKE) ssl-reload
