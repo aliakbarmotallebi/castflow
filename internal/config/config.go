@@ -41,6 +41,7 @@ type TranscodeConfig struct {
 	FFmpegPath         string
 	FFprobePath        string
 	Qualities          []domain.QualityProfile
+	PlayerQualities    []string
 	HLSSegmentSeconds  int
 	ThumbnailAtSec     float64
 	TooltipIntervalSec float64
@@ -62,6 +63,7 @@ type OutboxConfig struct {
 // Load reads configuration from environment variables.
 func Load() (*Config, error) {
 	api, cdn, player := resolvePublicURLs()
+	qualities := defaultQualities()
 	cfg := &Config{
 		HTTPAddr:      env("CASTFLOW_HTTP_ADDR", ":8080"),
 		APIKey:        env("CASTFLOW_API_KEY", "dev-secret-key"),
@@ -91,7 +93,8 @@ func Load() (*Config, error) {
 			TooltipMaxFrames:   envInt("CASTFLOW_TOOLTIP_MAX_FRAMES", 60),
 			TooltipCols:        envInt("CASTFLOW_TOOLTIP_COLS", 10),
 			TempDir:            env("CASTFLOW_TEMP_DIR", "./data/tmp"),
-			Qualities:          defaultQualities(),
+			Qualities:          qualities,
+			PlayerQualities:    defaultPlayerQualities(qualities),
 		},
 		Worker: WorkerConfig{
 			Concurrency:    envInt("CASTFLOW_WORKER_CONCURRENCY", 2),
@@ -126,6 +129,41 @@ func defaultQualities() []domain.QualityProfile {
 		return []domain.QualityProfile{presets["360p"], presets["720p"], presets["1080p"]}
 	}
 	return out
+}
+
+// defaultPlayerQualities returns quality labels shown in the player menu.
+// CASTFLOW_PLAYER_QUALITIES overrides; when unset, all transcoded qualities are listed.
+func defaultPlayerQualities(transcoded []domain.QualityProfile) []string {
+	raw := env("CASTFLOW_PLAYER_QUALITIES", "")
+	if raw == "" {
+		out := make([]string, len(transcoded))
+		for i, q := range transcoded {
+			out[i] = q.Name
+		}
+		return out
+	}
+	presets := qualityPresetNames()
+	var out []string
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if presets[name] {
+			out = append(out, name)
+		}
+	}
+	if len(out) == 0 {
+		out = make([]string, len(transcoded))
+		for i, q := range transcoded {
+			out[i] = q.Name
+		}
+	}
+	return out
+}
+
+func qualityPresetNames() map[string]bool {
+	return map[string]bool{
+		"144p": true, "240p": true, "360p": true,
+		"480p": true, "720p": true, "1080p": true,
+	}
 }
 
 func env(key, fallback string) string {

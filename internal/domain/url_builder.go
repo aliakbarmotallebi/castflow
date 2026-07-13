@@ -8,13 +8,14 @@ import (
 
 // URLBuilder generates public playback URLs on custom domains.
 type URLBuilder struct {
-	CDNBase    string
-	PlayerBase string
+	CDNBase          string
+	PlayerBase       string
+	PlayerQualities  []string
 }
 
 // NewURLBuilder creates a URL builder from CDN and player base URLs.
-func NewURLBuilder(cdnBase, playerBase string) *URLBuilder {
-	return &URLBuilder{CDNBase: cdnBase, PlayerBase: playerBase}
+func NewURLBuilder(cdnBase, playerBase string, playerQualities []string) *URLBuilder {
+	return &URLBuilder{CDNBase: cdnBase, PlayerBase: playerBase, PlayerQualities: playerQualities}
 }
 
 func (b *URLBuilder) videoBase(videoID string) string {
@@ -60,6 +61,7 @@ func (b *URLBuilder) BuildPlayerConfig(video *Video) PlayerConfig {
 		},
 		Poster:    links.Thumbnail,
 		Thumbnail: links.TooltipVTT,
+		Qualities: b.PlayerQualities,
 	}
 }
 

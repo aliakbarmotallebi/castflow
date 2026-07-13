@@ -13,6 +13,49 @@
     .video-js { width: 100%; aspect-ratio: 16/9; }
     .vjs-big-play-button { background-color: #038A83 !important; border-color: #038A83 !important; }
     .error { color: #ff6b6b; padding: 24px; text-align: center; }
+
+    /* Quality selector */
+    .vjs-quality-menu .vjs-quality-label {
+      font-size: 0.85em;
+      line-height: 2.5em;
+      padding: 0 0.5em;
+      color: #fff;
+    }
+    .vjs-quality-menu .vjs-menu .vjs-menu-content {
+      max-height: 280px;
+    }
+    .vjs-quality-menu .vjs-menu-item.vjs-selected {
+      background-color: #038A83;
+    }
+
+    /* Tooltip sprite preview on progress bar */
+    .vjs-progress-control { position: relative; }
+    .cf-thumb-tooltip {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      transform: translateX(-50%);
+      margin-bottom: 8px;
+      border: 2px solid #038A83;
+      border-radius: 4px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      z-index: 10;
+      background-color: #000;
+      overflow: hidden;
+    }
+    .cf-thumb-tooltip .cf-thumb-time {
+      display: block;
+      text-align: center;
+      font-size: 11px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.75);
+      padding: 2px 6px;
+    }
+    .cf-thumb-tooltip .cf-thumb-img {
+      display: block;
+      background-repeat: no-repeat;
+    }
   </style>
 </head>
 <body>
@@ -23,6 +66,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/video.js@8.16.1/dist/video.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-quality-levels@4.1.0/dist/videojs-contrib-quality-levels.min.js"></script>
   <script>
     const params = new URLSearchParams(location.search);
     const configURL = params.get('config');
@@ -51,17 +95,287 @@
         const hls = (cfg.source || []).find(s => s.type === 'application/x-mpegURL');
         if (!hls) throw new Error('HLS source not found in config');
 
+        const behavior = cfg.behavior || {};
         const player = videojs('player', {
           poster: cfg.poster || undefined,
           sources: [{ src: hls.src, type: hls.type }],
           fluid: true,
+          autoplay: !!behavior.autostart,
+          muted: !!behavior.mute,
+          loop: !!behavior.repeat,
+          preload: behavior.preload || 'auto',
           html5: { vhs: { overrideNative: !videojs.browser.IS_SAFARI } },
         });
 
         player.on('error', () => showError('خطا در پخش ویدیو'));
+
+        player.ready(() => {
+          setupQualitySelector(player, cfg.qualities);
+          if (cfg.thumbnail) {
+            setupTooltipSprites(player, cfg.thumbnail);
+          }
+        });
       } catch (e) {
         showError(e.message);
       }
+    }
+
+    /* ── Quality selector ─────────────────────────────────────────── */
+
+    const QUALITY_HEIGHTS = {
+      '144p': 144, '240p': 240, '360p': 360,
+      '480p': 480, '720p': 720, '1080p': 1080,
+    };
+
+    function resolveAllowedHeights(qualities) {
+      if (!qualities || !qualities.length) return [];
+      return qualities.map(q => {
+        if (QUALITY_HEIGHTS[q]) return QUALITY_HEIGHTS[q];
+        const n = parseInt(String(q).replace(/p$/i, ''), 10);
+        return Number.isFinite(n) ? n : null;
+      }).filter(h => h != null);
+    }
+
+    let selectedQualityHeight = null; // null = auto ABR
+
+    function setupQualitySelector(player, configuredQualities) {
+      const allowedHeights = resolveAllowedHeights(configuredQualities);
+
+      const MenuButton = videojs.getComponent('MenuButton');
+      const MenuItem = videojs.getComponent('MenuItem');
+
+      class QualityMenuButton extends MenuButton {
+        constructor(p, options) {
+          super(p, options);
+          this.controlText('کیفیت');
+          this.addClass('vjs-quality-menu');
+        }
+
+        createEl() {
+          const el = super.createEl();
+          const label = videojs.dom.createEl('span', { className: 'vjs-quality-label' }, {}, 'خودکار');
+          el.appendChild(label);
+          this.labelEl_ = label;
+          return el;
+        }
+
+        createItems() {
+          const items = [];
+          const p = this.player();
+
+          const autoItem = new MenuItem(p, {
+            label: 'خودکار',
+            selectable: true,
+            selected: selectedQualityHeight === null,
+          });
+          autoItem.on('click', () => {
+            selectedQualityHeight = null;
+            applyQualitySelection(p, null, allowedHeights);
+            if (this.labelEl_) this.labelEl_.textContent = 'خودکار';
+          });
+          items.push(autoItem);
+
+          const levels = p.qualityLevels();
+          const seen = new Set();
+          const sorted = [];
+          for (let i = 0; i < levels.length; i++) {
+            const lvl = levels[i];
+            if (!lvl.height || seen.has(lvl.height)) continue;
+            if (allowedHeights.length && !allowedHeights.includes(lvl.height)) continue;
+            seen.add(lvl.height);
+            sorted.push(lvl);
+          }
+          sorted.sort((a, b) => b.height - a.height);
+
+          sorted.forEach(lvl => {
+            const label = formatQualityLabel(lvl);
+            const item = new MenuItem(p, {
+              label,
+              selectable: true,
+              selected: selectedQualityHeight === lvl.height,
+            });
+            const h = lvl.height;
+            item.on('click', () => {
+              selectedQualityHeight = h;
+              applyQualitySelection(p, h, allowedHeights);
+              if (this.labelEl_) this.labelEl_.textContent = h + 'p';
+            });
+            items.push(item);
+          });
+
+          return items;
+        }
+
+        handleClick(event) {
+          this.update();
+          super.handleClick(event);
+        }
+      }
+
+      function applyQualitySelection(p, height, allowed) {
+        const levels = p.qualityLevels();
+        for (let i = 0; i < levels.length; i++) {
+          const lvl = levels[i];
+          const permitted = !allowed.length || allowed.includes(lvl.height);
+          if (!permitted) {
+            levels[i].enabled = false;
+            continue;
+          }
+          levels[i].enabled = height === null || lvl.height === height;
+        }
+      }
+
+      if (!videojs.getComponent('QualityMenuButton')) {
+        videojs.registerComponent('QualityMenuButton', QualityMenuButton);
+      }
+
+      const controlBar = player.getChild('controlBar');
+      const qualityBtn = controlBar.addChild('QualityMenuButton', {}, controlBar.children().length - 1);
+
+      // Hide menu when only one quality is configured.
+      if (allowedHeights.length === 1) {
+        qualityBtn.hide();
+      }
+
+      const levels = player.qualityLevels();
+      const applyAllowed = () => applyQualitySelection(player, selectedQualityHeight, allowedHeights);
+      levels.on('addqualitylevel', () => {
+        applyAllowed();
+        qualityBtn.update();
+      });
+      player.one('loadedmetadata', applyAllowed);
+    }
+
+    function formatQualityLabel(level) {
+      if (level.height) return level.height + 'p';
+      if (level.width) return level.width + 'w';
+      if (level.bitrate) return Math.round(level.bitrate / 1000) + 'k';
+      return 'کیفیت';
+    }
+
+    /* ── Tooltip sprites (VTT + PNG) ────────────────────────────── */
+
+    async function setupTooltipSprites(player, vttUrl) {
+      let text;
+      try {
+        const res = await fetch(vttUrl);
+        if (!res.ok) return;
+        text = await res.text();
+      } catch {
+        return;
+      }
+
+      const cues = parseSpriteVTT(text);
+      if (!cues.length) return;
+
+      const spriteUrl = resolveSpriteUrl(vttUrl, cues[0].image);
+      const frameW = cues[0].w;
+      const frameH = cues[0].h;
+
+      const progressControl = player.controlBar.progressControl.el();
+      const holder = progressControl.querySelector('.vjs-progress-holder') || progressControl;
+
+      const tip = document.createElement('div');
+      tip.className = 'cf-thumb-tooltip';
+      tip.innerHTML =
+        '<span class="cf-thumb-time"></span>' +
+        '<span class="cf-thumb-img"></span>';
+      holder.appendChild(tip);
+
+      const timeEl = tip.querySelector('.cf-thumb-time');
+      const imgEl = tip.querySelector('.cf-thumb-img');
+      imgEl.style.width = frameW + 'px';
+      imgEl.style.height = frameH + 'px';
+      imgEl.style.backgroundImage = 'url("' + spriteUrl + '")';
+
+      holder.addEventListener('mousemove', (e) => {
+        const rect = holder.getBoundingClientRect();
+        if (!rect.width || !player.duration()) return;
+
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const time = pct * player.duration();
+        const cue = findCue(cues, time);
+        if (!cue) {
+          tip.style.display = 'none';
+          return;
+        }
+
+        tip.style.display = 'block';
+        tip.style.left = (pct * 100) + '%';
+        imgEl.style.backgroundPosition = '-' + cue.x + 'px -' + cue.y + 'px';
+        timeEl.textContent = formatTime(time);
+      });
+
+      holder.addEventListener('mouseleave', () => {
+        tip.style.display = 'none';
+      });
+    }
+
+    function resolveSpriteUrl(vttUrl, imageRef) {
+      if (imageRef && /^https?:\/\//.test(imageRef)) return imageRef;
+      const base = vttUrl.replace(/[^/]+$/, '');
+      return base + (imageRef || 'tooltip.png');
+    }
+
+    function parseSpriteVTT(text) {
+      const cues = [];
+      const blocks = text.replace(/\r\n/g, '\n').split(/\n\n+/);
+      for (const block of blocks) {
+        const lines = block.trim().split('\n');
+        if (lines.length < 2) continue;
+        const timeLine = lines.find(l => l.includes('-->'));
+        const payload = lines[lines.length - 1];
+        if (!timeLine || !payload) continue;
+
+        const [startStr, endStr] = timeLine.split('-->').map(s => s.trim());
+        const start = parseVTTTime(startStr);
+        const end = parseVTTTime(endStr);
+        if (start === null) continue;
+
+        const m = payload.match(/^(?:([^#]+)#)?xywh=(\d+),(\d+),(\d+),(\d+)/);
+        if (!m) continue;
+
+        cues.push({
+          start,
+          end: end ?? start + 5,
+          image: m[1] || 'tooltip.png',
+          x: +m[2],
+          y: +m[3],
+          w: +m[4],
+          h: +m[5],
+        });
+      }
+      return cues;
+    }
+
+    function parseVTTTime(str) {
+      const m = str.match(/(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?/);
+      if (!m) return null;
+      const h = m[1] ? +m[1] : 0;
+      const min = +m[2];
+      const sec = +m[3];
+      const ms = m[4] ? +m[4].padEnd(3, '0').slice(0, 3) : 0;
+      return h * 3600 + min * 60 + sec + ms / 1000;
+    }
+
+    function findCue(cues, time) {
+      for (const cue of cues) {
+        if (time >= cue.start && time < cue.end) return cue;
+      }
+      if (cues.length && time >= cues[cues.length - 1].start) {
+        return cues[cues.length - 1];
+      }
+      return null;
+    }
+
+    function formatTime(sec) {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      if (h > 0) {
+        return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+      }
+      return m + ':' + String(s).padStart(2, '0');
     }
   </script>
 </body>

@@ -53,7 +53,7 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 	repo := postgres.NewVideoRepository(db)
 	uploadWriter := postgres.NewUploadWriter(db)
 	outboxRepo := postgres.NewOutboxRepository(db)
-	urlBuilder := domain.NewURLBuilder(cfg.CDNBaseURL, cfg.PlayerBaseURL)
+	urlBuilder := domain.NewURLBuilder(cfg.CDNBaseURL, cfg.PlayerBaseURL, cfg.Transcode.PlayerQualities)
 	transcoder := ffmpeg.NewTranscoder(
 		cfg.Transcode.FFmpegPath,
 		cfg.Transcode.FFprobePath,

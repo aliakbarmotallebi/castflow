@@ -24,6 +24,7 @@ type PlayerConfig struct {
 	Source      []PlayerSource    `json:"source"`
 	Poster      string            `json:"poster"`
 	Thumbnail   string            `json:"thumbnail"`
+	Qualities   []string          `json:"qualities,omitempty"`
 }
 
 type PlayerBehavior struct {
