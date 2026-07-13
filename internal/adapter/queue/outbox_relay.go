@@ -71,7 +71,10 @@ func (r *OutboxRelay) PublishEvent(ctx context.Context, event domain.OutboxEvent
 		if err != nil {
 			return fmt.Errorf("invalid videoId: %w", err)
 		}
-		return r.queue.EnqueueTranscode(ctx, videoID)
+		return r.queue.EnqueueTranscode(ctx, videoID, domain.TranscodeJobOptions{
+			Profiles: payload.Profiles,
+			Force:    payload.Force,
+		})
 	default:
 		return fmt.Errorf("unknown outbox event type: %s", event.EventType)
 	}

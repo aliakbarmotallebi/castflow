@@ -141,6 +141,14 @@ type querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+func marshalTranscodePayload(videoID uuid.UUID, opts domain.TranscodeJobOptions) ([]byte, error) {
+	return json.Marshal(domain.TranscodeOutboxPayload{
+		VideoID:  videoID.String(),
+		Profiles: opts.Profiles,
+		Force:    opts.Force,
+	})
+}
+
 func saveVideo(ctx context.Context, q querier, v *domain.Video) error {
 	_, err := q.ExecContext(ctx, `
 		INSERT INTO videos (id, title, description, status, duration_sec, file_size, content_type, origin_key, playback_variant, error_message, created_at, updated_at)

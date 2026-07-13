@@ -9,6 +9,7 @@ import (
 	"castflow/internal/adapter/postgres"
 	"castflow/internal/adapter/queue"
 	"castflow/internal/adapter/storage"
+	"castflow/internal/adapter/webhook"
 	"castflow/internal/application"
 	"castflow/internal/config"
 	"castflow/internal/domain"
@@ -17,14 +18,19 @@ import (
 
 // Bootstrap wires shared dependencies for API and worker processes.
 type Bootstrap struct {
-	Cfg         *config.Config
-	Repo          domain.VideoRepository
-	Store         domain.ObjectStorage
-	URLBuilder    *domain.URLBuilder
-	UploadWriter  domain.VideoUploadWriter
-	JobQueue      domain.JobQueue
-	QueueRunner *queue.Asynq
-	OutboxRelay domain.OutboxRelay
+	Cfg              *config.Config
+	Repo             domain.VideoRepository
+	Renditions       domain.RenditionRepository
+	Store            domain.ObjectStorage
+	URLBuilder       *domain.URLBuilder
+	UploadWriter     domain.VideoUploadWriter
+	Scheduler        domain.TranscodeScheduler
+	JobQueue         domain.JobQueue
+	QueueRunner      *queue.Asynq
+	OutboxRelay      domain.OutboxRelay
+	Webhook          domain.WebhookNotifier
+	ProcessVideo     *application.ProcessVideo
+	RetranscodeVideo *application.RetranscodeVideo
 }
 
 func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
@@ -51,9 +57,13 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 	}
 
 	repo := postgres.NewVideoRepository(db)
+	renditionRepo := postgres.NewRenditionRepository(db)
 	uploadWriter := postgres.NewUploadWriter(db)
+	scheduler := postgres.NewTranscodeScheduler(db)
 	outboxRepo := postgres.NewOutboxRepository(db)
 	urlBuilder := domain.NewURLBuilder(cfg.CDNBaseURL, cfg.PlayerBaseURL, cfg.Transcode.PlayerQualities)
+	webhookNotifier := webhook.NewNotifier(cfg.Playback.WebhookURL, cfg.Playback.WebhookSecret)
+
 	transcoder := ffmpeg.NewTranscoder(
 		cfg.Transcode.FFmpegPath,
 		cfg.Transcode.FFprobePath,
@@ -61,7 +71,11 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 		cfg.Transcode.TooltipMaxFrames,
 		cfg.Transcode.TooltipCols,
 	)
-	processUC := application.NewProcessVideo(repo, store, transcoder, urlBuilder, cfg.Transcode.TempDir)
+	processUC := application.NewProcessVideo(
+		repo, renditionRepo, store, transcoder, urlBuilder, webhookNotifier,
+		cfg.Playback, cfg.Transcode, cfg.Transcode.TempDir,
+	)
+	retranscodeUC := application.NewRetranscodeVideo(repo, scheduler)
 
 	jobQueue, err := queue.NewAsynq(cfg.RedisURL, cfg.Worker.Concurrency)
 	if err != nil {
@@ -69,8 +83,8 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 	}
 
 	processor := &queue.TranscodeProcessor{
-		ProcessFn: func(ctx context.Context, videoID uuid.UUID) error {
-			return processUC.Execute(ctx, videoID, cfg.Transcode.Qualities, cfg.Transcode.ThumbnailAtSec, cfg.Transcode.TooltipIntervalSec)
+		ProcessFn: func(ctx context.Context, videoID uuid.UUID, opts domain.TranscodeJobOptions) error {
+			return processUC.Execute(ctx, videoID, opts)
 		},
 	}
 	jobQueue.RegisterProcessor(processor)
@@ -78,13 +92,18 @@ func NewBootstrap(cfg *config.Config) (*Bootstrap, error) {
 	outboxRelay := queue.NewOutboxRelay(outboxRepo, jobQueue, cfg.Outbox.PollInterval, cfg.Outbox.BatchSize)
 
 	return &Bootstrap{
-		Cfg:          cfg,
-		Repo:         repo,
-		Store:        store,
-		URLBuilder:   urlBuilder,
-		UploadWriter: uploadWriter,
-		JobQueue:     jobQueue,
-		QueueRunner:  jobQueue,
-		OutboxRelay:  outboxRelay,
+		Cfg:              cfg,
+		Repo:             repo,
+		Renditions:       renditionRepo,
+		Store:            store,
+		URLBuilder:       urlBuilder,
+		UploadWriter:     uploadWriter,
+		Scheduler:        scheduler,
+		JobQueue:         jobQueue,
+		QueueRunner:      jobQueue,
+		OutboxRelay:      outboxRelay,
+		Webhook:          webhookNotifier,
+		ProcessVideo:     processUC,
+		RetranscodeVideo: retranscodeUC,
 	}, nil
 }

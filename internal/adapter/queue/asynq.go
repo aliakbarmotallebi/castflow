@@ -12,14 +12,14 @@ import (
 )
 
 const (
-	// Name is the Asynq queue name (visible in Asynqmon).
-	Name = "castflow"
-	// TaskTranscode is the task type for video transcoding.
+	Name          = "castflow"
 	TaskTranscode = "transcode"
 )
 
 type transcodePayload struct {
-	VideoID string `json:"videoId"`
+	VideoID  string   `json:"videoId"`
+	Profiles []string `json:"profiles,omitempty"`
+	Force    bool     `json:"force,omitempty"`
 }
 
 // Asynq implements domain.JobQueue and runs an Asynq worker server.
@@ -53,11 +53,15 @@ func (a *Asynq) RegisterProcessor(processor *TranscodeProcessor) {
 	a.processor = processor
 }
 
-func (a *Asynq) EnqueueTranscode(ctx context.Context, videoID uuid.UUID) error {
+func (a *Asynq) EnqueueTranscode(ctx context.Context, videoID uuid.UUID, opts domain.TranscodeJobOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	payload, err := json.Marshal(transcodePayload{VideoID: videoID.String()})
+	payload, err := json.Marshal(transcodePayload{
+		VideoID:  videoID.String(),
+		Profiles: opts.Profiles,
+		Force:    opts.Force,
+	})
 	if err != nil {
 		return fmt.Errorf("marshal transcode payload: %w", err)
 	}
@@ -82,7 +86,10 @@ func (a *Asynq) handleTranscode(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return fmt.Errorf("%w: invalid videoId: %v", asynq.SkipRetry, err)
 	}
-	return a.processor.Process(ctx, id)
+	return a.processor.Process(ctx, id, domain.TranscodeJobOptions{
+		Profiles: p.Profiles,
+		Force:    p.Force,
+	})
 }
 
 func (a *Asynq) Run(ctx context.Context) error {

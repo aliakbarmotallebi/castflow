@@ -62,9 +62,35 @@ type TranscodeOutput struct {
 	TooltipPNG   string
 }
 
+// TranscodeJobOptions configures a transcode queue job.
+type TranscodeJobOptions struct {
+	Profiles []string
+	Force    bool
+}
+
 // JobQueue enqueues background transcode jobs.
 type JobQueue interface {
-	EnqueueTranscode(ctx context.Context, videoID uuid.UUID) error
+	EnqueueTranscode(ctx context.Context, videoID uuid.UUID, opts TranscodeJobOptions) error
+}
+
+// RenditionRepository persists per-profile playback outputs.
+type RenditionRepository interface {
+	Save(ctx context.Context, r *Rendition) error
+	Update(ctx context.Context, r *Rendition) error
+	FindByVideoID(ctx context.Context, videoID uuid.UUID) ([]*Rendition, error)
+	FindLatestByProfile(ctx context.Context, videoID uuid.UUID, profile string) (*Rendition, error)
+	FindByVideoProfileRevision(ctx context.Context, videoID uuid.UUID, profile, revision string) (*Rendition, error)
+	DeleteByVideoID(ctx context.Context, videoID uuid.UUID) error
+}
+
+// TranscodeScheduler schedules transcode jobs via the outbox.
+type TranscodeScheduler interface {
+	ScheduleTranscode(ctx context.Context, videoID uuid.UUID, opts TranscodeJobOptions) error
+}
+
+// WebhookNotifier sends HTTP callbacks for lifecycle events.
+type WebhookNotifier interface {
+	NotifyRenditionReady(ctx context.Context, video *Video, rendition *Rendition, links RenditionLinks) error
 }
 
 // VideoUploadWriter atomically persists upload metadata and schedules transcoding.

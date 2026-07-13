@@ -23,23 +23,52 @@ func (b *URLBuilder) videoBase(videoID string) string {
 	return fmt.Sprintf("%s/v/%s", trimRightSlash(b.CDNBase), videoID)
 }
 
-func (b *URLBuilder) hlsURL(videoID, variant string) string {
+func (b *URLBuilder) hlsURL(videoID, profile, revision string) string {
 	base := b.videoBase(videoID)
-	if strings.TrimSpace(variant) == "" {
+	path := playbackPath(profile, revision)
+	if path == "" {
 		return base + "/hls/master.m3u8"
 	}
-	return base + "/hls/" + url.PathEscape(variant) + "/master.m3u8"
+	return base + "/hls/" + escapePath(path) + "/master.m3u8"
 }
 
-func (b *URLBuilder) dashURL(videoID, variant string) string {
+func (b *URLBuilder) dashURL(videoID, profile, revision string) string {
 	base := b.videoBase(videoID)
-	if strings.TrimSpace(variant) == "" {
+	path := playbackPath(profile, revision)
+	if path == "" {
 		return base + "/dash/manifest.mpd"
 	}
-	return base + "/dash/" + url.PathEscape(variant) + "/manifest.mpd"
+	return base + "/dash/" + escapePath(path) + "/manifest.mpd"
 }
 
-// BuildLinks generates all playback URLs for a video.
+func playbackPath(profile, revision string) string {
+	if strings.TrimSpace(profile) == "" && strings.TrimSpace(revision) == "" {
+		return ""
+	}
+	return BuildVariantPath(profile, revision)
+}
+
+func escapePath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+// BuildRenditionLinks builds URLs for one profile/revision pair.
+func (b *URLBuilder) BuildRenditionLinks(videoID, title, profile, revision string, qualities []string) RenditionLinks {
+	return RenditionLinks{
+		Profile:   profile,
+		Revision:  revision,
+		Status:    string(RenditionReady),
+		HLS:       b.hlsURL(videoID, profile, revision),
+		DASH:      b.dashURL(videoID, profile, revision),
+		Qualities: qualities,
+	}
+}
+
+// BuildLinks generates legacy flat playback URLs (primary / empty variant).
 func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	base := b.videoBase(videoID)
 	config := base + "/config.json"
@@ -48,8 +77,8 @@ func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	return PlaybackLinks{
 		VideoID:    videoID,
 		Title:      title,
-		HLS:        b.hlsURL(videoID, ""),
-		DASH:       b.dashURL(videoID, ""),
+		HLS:        b.hlsURL(videoID, "", ""),
+		DASH:       b.dashURL(videoID, "", ""),
 		Config:     config,
 		Player:     player,
 		Thumbnail:  base + "/thumbnail.jpg",
@@ -59,35 +88,125 @@ func (b *URLBuilder) BuildLinks(videoID, title string) PlaybackLinks {
 	}
 }
 
-// BuildLinksForVideo generates playback URLs using the video's stored playback variant.
-func (b *URLBuilder) BuildLinksForVideo(video *Video) PlaybackLinks {
+// BuildLinksForRendition generates playback links for a specific rendition.
+func (b *URLBuilder) BuildLinksForRendition(video *Video, r *Rendition) PlaybackLinks {
 	links := b.BuildLinks(video.ID.String(), video.Title)
-	links.HLS = b.hlsURL(video.ID.String(), video.PlaybackVariant)
-	links.DASH = b.dashURL(video.ID.String(), video.PlaybackVariant)
+	links.HLS = b.hlsURL(video.ID.String(), r.Profile, r.Revision)
+	links.DASH = b.dashURL(video.ID.String(), r.Profile, r.Revision)
 	return links
 }
 
-// BuildPlayerConfig creates the JSON config consumed by the player page.
-func (b *URLBuilder) BuildPlayerConfig(video *Video) PlayerConfig {
-	links := b.BuildLinksForVideo(video)
+// BuildLinksForVideo uses the stored playback variant (legacy profile/revision path).
+func (b *URLBuilder) BuildLinksForVideo(video *Video) PlaybackLinks {
+	links := b.BuildLinks(video.ID.String(), video.Title)
+	if video.PlaybackVariant != "" {
+		profile, revision := splitVariantPath(video.PlaybackVariant)
+		links.HLS = b.hlsURL(video.ID.String(), profile, revision)
+		links.DASH = b.dashURL(video.ID.String(), profile, revision)
+	}
+	return links
+}
+
+// BuildPlayerConfig creates config.json from video metadata and ready renditions.
+func (b *URLBuilder) BuildPlayerConfig(video *Video, renditions []*Rendition, profiles map[string]PlaybackProfile, primaryProfile string) PlayerConfig {
+	base := b.videoBase(video.ID.String())
 	var desc *string
 	if video.Description != "" {
 		desc = &video.Description
 	}
-	return PlayerConfig{
+
+	primary := sanitizeProfileName(primaryProfile)
+	if primary == "" {
+		primary = "default"
+	}
+
+	cfg := PlayerConfig{
 		Title:       video.Title,
 		Description: desc,
 		MediaID:     video.ID.String(),
+		Primary:     primary,
 		Behavior:    DefaultPlayerBehavior(),
 		Appearance:  DefaultPlayerAppearance(),
-		Source: []PlayerSource{
+		Poster:      base + "/thumbnail.jpg",
+		Thumbnail:   base + "/tooltip.vtt",
+	}
+
+	ready := filterReadyRenditions(renditions)
+	for _, r := range ready {
+		qualities := r.Qualities
+		if prof, ok := profiles[r.Profile]; ok && len(prof.PlayerQualities) > 0 {
+			qualities = prof.PlayerQualities
+		}
+		cfg.Renditions = append(cfg.Renditions, RenditionSource{
+			Profile:   r.Profile,
+			Revision:  r.Revision,
+			Qualities: qualities,
+			Source: []PlayerSource{
+				{Src: b.hlsURL(video.ID.String(), r.Profile, r.Revision), Type: "application/x-mpegURL"},
+				{Src: b.dashURL(video.ID.String(), r.Profile, r.Revision), Type: "application/dash+xml"},
+			},
+			Poster:    base + "/thumbnail.jpg",
+			Thumbnail: base + "/tooltip.vtt",
+		})
+	}
+
+	primaryRendition := pickPrimaryRendition(ready, primary)
+	if primaryRendition != nil {
+		qualities := primaryRendition.Qualities
+		if prof, ok := profiles[primaryRendition.Profile]; ok && len(prof.PlayerQualities) > 0 {
+			qualities = prof.PlayerQualities
+		} else if len(qualities) == 0 {
+			qualities = b.PlayerQualities
+		}
+		cfg.Source = []PlayerSource{
+			{Src: b.hlsURL(video.ID.String(), primaryRendition.Profile, primaryRendition.Revision), Type: "application/x-mpegURL"},
+			{Src: b.dashURL(video.ID.String(), primaryRendition.Profile, primaryRendition.Revision), Type: "application/dash+xml"},
+		}
+		cfg.Qualities = qualities
+	} else {
+		links := b.BuildLinksForVideo(video)
+		cfg.Source = []PlayerSource{
 			{Src: links.HLS, Type: "application/x-mpegURL"},
 			{Src: links.DASH, Type: "application/dash+xml"},
-		},
-		Poster:    links.Thumbnail,
-		Thumbnail: links.TooltipVTT,
-		Qualities: b.PlayerQualities,
+		}
+		cfg.Qualities = b.PlayerQualities
 	}
+
+	return cfg
+}
+
+func filterReadyRenditions(renditions []*Rendition) []*Rendition {
+	var out []*Rendition
+	for _, r := range renditions {
+		if r != nil && r.Status == RenditionReady {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func pickPrimaryRendition(renditions []*Rendition, primary string) *Rendition {
+	for _, r := range renditions {
+		if r.Profile == primary {
+			return r
+		}
+	}
+	if len(renditions) > 0 {
+		return renditions[0]
+	}
+	return nil
+}
+
+func splitVariantPath(variant string) (profile, revision string) {
+	variant = strings.TrimSpace(variant)
+	if variant == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(variant, "/", 2)
+	if len(parts) == 1 {
+		return "default", parts[0]
+	}
+	return parts[0], parts[1]
 }
 
 // StorageKeys returns object storage keys for a video.

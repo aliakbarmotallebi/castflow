@@ -16,31 +16,34 @@ import (
 
 // Handler exposes REST API for video management.
 type Handler struct {
-	uploadUC   *application.UploadVideo
-	getVideoUC *application.GetVideo
-	listUC     *application.ListVideos
-	linksUC    *application.GetVideoLinks
-	deleteUC   *application.DeleteVideo
-	apiKey     string
+	uploadUC      *application.UploadVideo
+	getVideoUC    *application.GetVideo
+	listUC        *application.ListVideos
+	linksUC       *application.GetVideoLinks
+	deleteUC      *application.DeleteVideo
+	retranscodeUC *application.RetranscodeVideo
+	apiKey        string
 }
 
 type Deps struct {
-	Upload   *application.UploadVideo
-	GetVideo *application.GetVideo
-	List     *application.ListVideos
-	Links    *application.GetVideoLinks
-	Delete   *application.DeleteVideo
-	APIKey   string
+	Upload      *application.UploadVideo
+	GetVideo    *application.GetVideo
+	List        *application.ListVideos
+	Links       *application.GetVideoLinks
+	Delete      *application.DeleteVideo
+	Retranscode *application.RetranscodeVideo
+	APIKey      string
 }
 
 func NewHandler(d Deps) *Handler {
 	return &Handler{
-		uploadUC:   d.Upload,
-		getVideoUC: d.GetVideo,
-		listUC:     d.List,
-		linksUC:    d.Links,
-		deleteUC:   d.Delete,
-		apiKey:     d.APIKey,
+		uploadUC:      d.Upload,
+		getVideoUC:    d.GetVideo,
+		listUC:        d.List,
+		linksUC:       d.Links,
+		deleteUC:      d.Delete,
+		retranscodeUC: d.Retranscode,
+		apiKey:        d.APIKey,
 	}
 }
 
@@ -63,6 +66,7 @@ func (h *Handler) Router() chi.Router {
 			r.Get("/{id}", h.getVideo)
 			r.Get("/{id}/links", h.getLinks)
 			r.Get("/{id}/status", h.getStatus)
+			r.Post("/{id}/retranscode", h.retranscodeVideo)
 			r.Delete("/{id}", h.deleteVideo)
 		})
 	})
@@ -171,10 +175,45 @@ func (h *Handler) getLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"videoId": out.Video.ID.String(),
-		"title":   out.Video.Title,
-		"status":  out.Status,
-		"links":   out.Links,
+		"videoId":    out.Video.ID.String(),
+		"title":      out.Video.Title,
+		"status":     out.Status,
+		"primary":    out.Primary,
+		"renditions": out.Renditions,
+		"links":      out.Links,
+	})
+}
+
+func (h *Handler) retranscodeVideo(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var body struct {
+		Profiles []string `json:"profiles"`
+		Force    bool     `json:"force"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+	}
+
+	if err := h.retranscodeUC.Execute(r.Context(), id, application.RetranscodeInput{
+		Profiles: body.Profiles,
+		Force:    body.Force,
+	}); err != nil {
+		writeAppError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"id":      id.String(),
+		"status":  domain.StatusProcessing,
+		"message": "retranscode scheduled",
 	})
 }
 

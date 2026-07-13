@@ -4,50 +4,76 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"regexp"
+	"fmt"
 	"sort"
 	"strings"
 )
 
-var bitrateRe = regexp.MustCompile(`(?i)^(\d+)\s*k$`)
-
-// BuildPlaybackVariant builds a readable, cache-friendly identifier for a transcode ladder.
-// Example: h_,360_800,720_2500,1080_5000,k__6fa82d1a
-func BuildPlaybackVariant(qualities []QualityProfile) string {
-	if len(qualities) == 0 {
-		return ""
-	}
-
-	// Normalize order (stable across config ordering changes).
-	q := make([]QualityProfile, 0, len(qualities))
-	q = append(q, qualities...)
+// BuildRevision returns a short hash of the effective transcode settings for a profile.
+func BuildRevision(in RevisionInput) string {
+	q := append([]QualityProfile(nil), in.Qualities...)
 	sort.Slice(q, func(i, j int) bool { return q[i].Height < q[j].Height })
 
-	parts := make([]string, 0, len(q))
-	for _, it := range q {
-		br := normalizeK(it.VideoBitrate)
-		if br == "" {
-			// Fall back to "height" only if bitrate is missing/unparseable.
-			parts = append(parts, strings.TrimSpace(it.Name))
-			continue
-		}
-		parts = append(parts, strings.TrimSuffix(strings.TrimSpace(it.Name), "p")+"_"+br)
+	payload := struct {
+		Profile         string           `json:"profile"`
+		Qualities       []QualityProfile `json:"qualities"`
+		HLSSegmentSec   int              `json:"hlsSegmentSec"`
+		ThumbnailAtSec  float64          `json:"thumbnailAtSec"`
+		TooltipInterval float64          `json:"tooltipIntervalSec"`
+	}{
+		Profile:         strings.TrimSpace(in.Profile),
+		Qualities:       q,
+		HLSSegmentSec:   in.HLSSegmentSec,
+		ThumbnailAtSec:  in.ThumbnailAtSec,
+		TooltipInterval: in.TooltipInterval,
 	}
-
-	// Hash the full normalized quality list to avoid collisions and to ensure variant changes
-	// when any effective transcode setting changes (bitrate/size/name).
-	b, _ := json.Marshal(q)
+	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)
-	hash8 := hex.EncodeToString(sum[:])[:8]
-
-	return "h_," + strings.Join(parts, ",") + ",k__" + hash8
+	return hex.EncodeToString(sum[:])[:8]
 }
 
-func normalizeK(s string) string {
-	s = strings.TrimSpace(s)
-	m := bitrateRe.FindStringSubmatch(s)
-	if len(m) != 2 {
-		return ""
+// BuildVariantPath joins profile and revision for storage/URL paths.
+func BuildVariantPath(profile, revision string) string {
+	profile = sanitizeProfileName(profile)
+	revision = strings.TrimSpace(revision)
+	if profile == "" {
+		return revision
 	}
-	return m[1]
+	if revision == "" {
+		return profile
+	}
+	return profile + "/" + revision
+}
+
+// ReadableLadder returns resolution labels for logging/debug (e.g. 360-720-1080).
+func ReadableLadder(qualities []QualityProfile) string {
+	q := append([]QualityProfile(nil), qualities...)
+	sort.Slice(q, func(i, j int) bool { return q[i].Height < q[j].Height })
+	parts := make([]string, 0, len(q))
+	for _, it := range q {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			name = fmt.Sprintf("%dp", it.Height)
+		}
+		parts = append(parts, strings.TrimSuffix(name, "p"))
+	}
+	return strings.Join(parts, "-")
+}
+
+func sanitizeProfileName(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return "default"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "default"
+	}
+	return out
 }

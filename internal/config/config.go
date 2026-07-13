@@ -20,6 +20,7 @@ type Config struct {
 	APIBaseURL    string
 	Storage       StorageConfig
 	Transcode     TranscodeConfig
+	Playback      PlaybackConfig
 	Worker        WorkerConfig
 	Outbox        OutboxConfig
 	LogLevel      string
@@ -64,6 +65,7 @@ type OutboxConfig struct {
 func Load() (*Config, error) {
 	api, cdn, player := resolvePublicURLs()
 	qualities := defaultQualities()
+	playback := loadPlaybackConfig(qualities)
 	cfg := &Config{
 		HTTPAddr:      env("CASTFLOW_HTTP_ADDR", ":8080"),
 		APIKey:        env("CASTFLOW_API_KEY", "dev-secret-key"),
@@ -96,6 +98,7 @@ func Load() (*Config, error) {
 			Qualities:          qualities,
 			PlayerQualities:    defaultPlayerQualities(qualities),
 		},
+		Playback: playback,
 		Worker: WorkerConfig{
 			Concurrency:    envInt("CASTFLOW_WORKER_CONCURRENCY", 2),
 			EnableEmbedded: envBool("CASTFLOW_ENABLE_EMBEDDED_WORKER", true),
@@ -110,25 +113,7 @@ func Load() (*Config, error) {
 
 func defaultQualities() []domain.QualityProfile {
 	raw := env("CASTFLOW_QUALITIES", "360p,720p,1080p")
-	presets := map[string]domain.QualityProfile{
-		"144p":  {Name: "144p", Width: 256, Height: 144, VideoBitrate: "200k", AudioBitrate: "64k"},
-		"240p":  {Name: "240p", Width: 426, Height: 240, VideoBitrate: "400k", AudioBitrate: "64k"},
-		"360p":  {Name: "360p", Width: 640, Height: 360, VideoBitrate: "800k", AudioBitrate: "96k"},
-		"480p":  {Name: "480p", Width: 854, Height: 480, VideoBitrate: "1200k", AudioBitrate: "128k"},
-		"720p":  {Name: "720p", Width: 1280, Height: 720, VideoBitrate: "2500k", AudioBitrate: "128k"},
-		"1080p": {Name: "1080p", Width: 1920, Height: 1080, VideoBitrate: "5000k", AudioBitrate: "128k"},
-	}
-	var out []domain.QualityProfile
-	for _, name := range strings.Split(raw, ",") {
-		name = strings.TrimSpace(name)
-		if q, ok := presets[name]; ok {
-			out = append(out, q)
-		}
-	}
-	if len(out) == 0 {
-		return []domain.QualityProfile{presets["360p"], presets["720p"], presets["1080p"]}
-	}
-	return out
+	return parseQualityList(raw, qualityPresets())
 }
 
 // defaultPlayerQualities returns quality labels shown in the player menu.

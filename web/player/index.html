@@ -45,7 +45,18 @@
     .cf-controls-hidden .cf-ui { opacity: 0; pointer-events: none; }
     .cf-shell:hover .cf-ui,
     .cf-shell.cf-paused .cf-ui,
-    .cf-shell.cf-menu-open .cf-ui { opacity: 1; pointer-events: auto; }
+    .cf-shell.cf-menu-open .cf-ui,
+    .cf-shell.cf-touch-active .cf-ui { opacity: 1; pointer-events: auto; }
+
+    @media (max-width: 640px) {
+      .cf-shell.cf-mobile .cf-ui { opacity: 1; pointer-events: auto; }
+      .cf-shell.cf-mobile.cf-playing .cf-ui { opacity: 0; pointer-events: none; }
+      .cf-shell.cf-mobile.cf-playing.cf-touch-active .cf-ui,
+      .cf-shell.cf-mobile.cf-paused .cf-ui,
+      .cf-shell.cf-mobile.cf-menu-open .cf-ui { opacity: 1; pointer-events: auto; }
+      #progress-wrap { height: 1.75rem; }
+      .cf-btn { min-width: 2.75rem; min-height: 2.75rem; }
+    }
   </style>
 </head>
 <body class="min-h-screen bg-[#1a1818] flex items-center justify-center p-4 font-sans antialiased">
@@ -185,6 +196,11 @@
     const $ = id => document.getElementById(id);
     const params = new URLSearchParams(location.search);
     const configURL = params.get('config');
+    const profileOverride = params.get('profile');
+
+    const isMobileDevice = () =>
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+      || (window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
 
     if (!configURL) {
       showError('پارامتر config الزامی است. مثال: ?config=https://cdn.example.com/v/{id}/config.json');
@@ -304,9 +320,28 @@
       return cues.length && time >= cues[cues.length - 1].start ? cues[cues.length - 1] : null;
     }
 
-    function resolveSpriteUrl(vttUrl, imageRef) {
-      if (imageRef?.startsWith('http')) return imageRef;
-      return vttUrl.replace(/[^/]+$/, '') + (imageRef || 'tooltip.png');
+    function pickRendition(cfg) {
+      const renditions = Array.isArray(cfg.renditions) ? cfg.renditions : [];
+      if (!renditions.length) return null;
+
+      if (profileOverride) {
+        const forced = renditions.find(r => r.profile === profileOverride);
+        if (forced) return forced;
+      }
+
+      const primary = cfg.primary || 'default';
+      const mobile = isMobileDevice();
+      if (mobile) {
+        const mob = renditions.find(r => r.profile === 'mobile');
+        if (mob) return mob;
+      }
+      const def = renditions.find(r => r.profile === primary) || renditions[0];
+      return def;
+    }
+
+    function renditionSource(rendition) {
+      if (!rendition?.source?.length) return null;
+      return rendition.source.find(s => s.type === 'application/x-mpegURL') || rendition.source[0];
     }
 
     /* ── Main ────────────────────────────────────────────────────── */
@@ -319,13 +354,21 @@
 
         if (cfg.title) $('title').textContent = cfg.title;
 
-        const hls = (cfg.source || []).find(s => s.type === 'application/x-mpegURL');
+        const activeRendition = pickRendition(cfg);
+        const legacyHls = (cfg.source || []).find(s => s.type === 'application/x-mpegURL');
+        const hls = renditionSource(activeRendition) || legacyHls;
         if (!hls) throw new Error('منبع HLS در config یافت نشد');
 
         const behavior = cfg.behavior || {};
-        const allowedHeights = resolveAllowedHeights(cfg.qualities);
+        const allowedHeights = resolveAllowedHeights(
+          activeRendition?.qualities?.length ? activeRendition.qualities : cfg.qualities
+        );
         let selectedQuality = null;
         let spriteCues = [];
+        const mobile = isMobileDevice();
+
+        const shell = $('shell');
+        if (mobile) shell.classList.add('cf-mobile');
 
         const player = videojs('player', {
           controls: false,
@@ -342,7 +385,6 @@
 
         player.on('error', () => showError('خطا در پخش ویدیو'));
 
-        const shell = $('shell');
         const iconPlay = $('icon-play');
         const iconPause = $('icon-pause');
         const centerPlay = $('btn-center-play');
@@ -352,7 +394,8 @@
           iconPause.classList.toggle('hidden', !playing);
           centerPlay.classList.toggle('hidden', playing);
           shell.classList.toggle('cf-paused', !playing);
-          shell.classList.toggle('cf-controls-hidden', playing);
+          shell.classList.toggle('cf-playing', playing);
+          shell.classList.toggle('cf-controls-hidden', playing && !mobile);
         }
 
         function togglePlay() {
@@ -384,27 +427,45 @@
         progressInput.addEventListener('input', seekFromInput);
 
         const progressWrap = $('progress-wrap');
-        progressWrap.addEventListener('mousemove', e => {
-          const rect = progressWrap.getBoundingClientRect();
-          const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-          if (spriteCues.length && player.duration()) {
-            const time = pct * player.duration();
-            const cue = findCue(spriteCues, time);
-            if (cue) {
-              const img = $('sprite-img');
-              spriteTip.classList.remove('hidden');
-              spriteTip.style.left = (pct * 100) + '%';
-              $('sprite-time').textContent = formatTime(time);
-              img.style.width = cue.w + 'px';
-              img.style.height = cue.h + 'px';
-              img.style.backgroundImage = `url("${spriteCues._url}")`;
-              img.style.backgroundPosition = `-${cue.x}px -${cue.y}px`;
-            } else {
-              spriteTip.classList.add('hidden');
-            }
-          }
+        progressWrap.addEventListener('mousemove', showSpriteAtEvent);
+        progressWrap.addEventListener('touchstart', e => {
+          shell.classList.add('cf-touch-active');
+          showSpriteAtEvent(e.touches[0]);
+        }, { passive: true });
+        progressWrap.addEventListener('touchmove', e => {
+          showSpriteAtEvent(e.touches[0]);
+        }, { passive: true });
+        progressWrap.addEventListener('touchend', () => {
+          spriteTip.classList.add('hidden');
+          setTimeout(() => shell.classList.remove('cf-touch-active'), 2500);
         });
         progressWrap.addEventListener('mouseleave', () => spriteTip.classList.add('hidden'));
+
+        function showSpriteAtEvent(e) {
+          if (!e || !spriteCues.length || !player.duration()) return;
+          const rect = progressWrap.getBoundingClientRect();
+          const clientX = e.clientX ?? e.pageX;
+          const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          const time = pct * player.duration();
+          const cue = findCue(spriteCues, time);
+          if (cue) {
+            const img = $('sprite-img');
+            spriteTip.classList.remove('hidden');
+            spriteTip.style.left = (pct * 100) + '%';
+            $('sprite-time').textContent = formatTime(time);
+            img.style.width = cue.w + 'px';
+            img.style.height = cue.h + 'px';
+            img.style.backgroundImage = `url("${spriteCues._url}")`;
+            img.style.backgroundPosition = `-${cue.x}px -${cue.y}px`;
+          } else {
+            spriteTip.classList.add('hidden');
+          }
+        }
+
+        shell.addEventListener('touchstart', () => shell.classList.add('cf-touch-active'), { passive: true });
+        shell.addEventListener('touchend', () => {
+          setTimeout(() => { if (!shell.classList.contains('cf-menu-open')) shell.classList.remove('cf-touch-active'); }, 2500);
+        }, { passive: true });
 
         player.on('timeupdate', () => {
           const dur = player.duration();
@@ -543,16 +604,22 @@
           $('icon-fs-exit').classList.toggle('hidden', !document.fullscreenElement);
         });
 
-        // Sprite tooltips
-        if (cfg.thumbnail) {
+        // Sprite tooltips (shared across renditions)
+        const tooltipUrl = activeRendition?.thumbnail || cfg.thumbnail;
+        if (tooltipUrl) {
           try {
-            const vttRes = await fetch(cfg.thumbnail);
+            const vttRes = await fetch(tooltipUrl);
             if (vttRes.ok) {
               const text = await vttRes.text();
               spriteCues = parseSpriteVTT(text);
-              if (spriteCues.length) spriteCues._url = resolveSpriteUrl(cfg.thumbnail, spriteCues[0].image);
+              if (spriteCues.length) spriteCues._url = resolveSpriteUrl(tooltipUrl, spriteCues[0].image);
             }
           } catch { /* optional */ }
+        }
+
+        function resolveSpriteUrl(vttUrl, imageRef) {
+          if (imageRef?.startsWith('http')) return imageRef;
+          return vttUrl.replace(/[^/]+$/, '') + (imageRef || 'tooltip.png');
         }
 
         // Keyboard shortcuts

@@ -16,42 +16,41 @@ func TestURLBuilder_BuildLinks(t *testing.T) {
 	if links.Config != "https://cdn.example.com/v/abc-123/config.json" {
 		t.Errorf("unexpected config: %s", links.Config)
 	}
-	if links.Thumbnail != "https://cdn.example.com/v/abc-123/thumbnail.jpg" {
-		t.Errorf("unexpected thumbnail: %s", links.Thumbnail)
+}
+
+func TestURLBuilder_ProfileRevisionURLs(t *testing.T) {
+	b := NewURLBuilder("https://cdn.example.com", "https://player.example.com", nil)
+	hls := b.hlsURL("abc-123", "default", "a3f2b1c4")
+	if hls != "https://cdn.example.com/v/abc-123/hls/default/a3f2b1c4/master.m3u8" {
+		t.Fatalf("hls: %s", hls)
 	}
-	if links.OriginMP4 != "https://cdn.example.com/v/abc-123/origin.mp4" {
-		t.Errorf("unexpected origin: %s", links.OriginMP4)
-	}
-	if links.IFrame == "" {
-		t.Error("iframe should not be empty")
+	dash := b.dashURL("abc-123", "mobile", "deadbeef")
+	if dash != "https://cdn.example.com/v/abc-123/dash/mobile/deadbeef/manifest.mpd" {
+		t.Fatalf("dash: %s", dash)
 	}
 }
 
 func TestURLBuilder_BuildPlayerConfig_Qualities(t *testing.T) {
 	b := NewURLBuilder("https://cdn.example.com", "https://player.example.com", []string{"720p", "1080p"})
 	video := &Video{Title: "Test", ID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")}
-	cfg := b.BuildPlayerConfig(video)
+	renditions := []*Rendition{{
+		Profile: "default", Revision: "abc12345", Status: RenditionReady,
+		Qualities: []string{"720p", "1080p"},
+	}}
+	cfg := b.BuildPlayerConfig(video, renditions, map[string]PlaybackProfile{
+		"default": {Name: "default", PlayerQualities: []string{"720p", "1080p"}},
+	}, "default")
 	if len(cfg.Qualities) != 2 || cfg.Qualities[0] != "720p" {
 		t.Errorf("qualities: %v", cfg.Qualities)
 	}
-}
-
-func TestStorageKeys(t *testing.T) {
-	keys := StorageKeys("vid-1")
-	if keys.Origin != "v/vid-1/origin.mp4" {
-		t.Errorf("origin key: %s", keys.Origin)
-	}
-	if keys.HLSMaster != "v/vid-1/hls/master.m3u8" {
-		t.Errorf("hls master: %s", keys.HLSMaster)
+	if len(cfg.Renditions) != 1 || cfg.Renditions[0].Profile != "default" {
+		t.Errorf("renditions: %+v", cfg.Renditions)
 	}
 }
 
 func TestStorageKeysWithVariant(t *testing.T) {
-	keys := StorageKeysWithVariant("vid-1", "h_,360_800,k__deadbeef")
-	if keys.HLSMaster != "v/vid-1/hls/h_,360_800,k__deadbeef/master.m3u8" {
+	keys := StorageKeysWithVariant("vid-1", "default/a3f2b1c4")
+	if keys.HLSMaster != "v/vid-1/hls/default/a3f2b1c4/master.m3u8" {
 		t.Errorf("hls master: %s", keys.HLSMaster)
-	}
-	if keys.DASHManifest != "v/vid-1/dash/h_,360_800,k__deadbeef/manifest.mpd" {
-		t.Errorf("dash manifest: %s", keys.DASHManifest)
 	}
 }

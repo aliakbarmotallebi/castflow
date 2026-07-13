@@ -16,15 +16,17 @@ type PlaybackLinks struct {
 
 // PlayerConfig is served at config.json for the embedded player.
 type PlayerConfig struct {
-	Title       string           `json:"title"`
-	Description *string          `json:"description"`
-	MediaID     string           `json:"mediaid"`
-	Behavior    PlayerBehavior   `json:"behavior"`
-	Appearance  PlayerAppearance `json:"appearance"`
-	Source      []PlayerSource   `json:"source"`
-	Poster      string           `json:"poster"`
-	Thumbnail   string           `json:"thumbnail"`
-	Qualities   []string         `json:"qualities,omitempty"`
+	Title       string            `json:"title"`
+	Description *string           `json:"description"`
+	MediaID     string            `json:"mediaid"`
+	Primary     string            `json:"primary,omitempty"`
+	Behavior    PlayerBehavior    `json:"behavior"`
+	Appearance  PlayerAppearance  `json:"appearance"`
+	Source      []PlayerSource    `json:"source"`
+	Renditions  []RenditionSource `json:"renditions,omitempty"`
+	Poster      string            `json:"poster"`
+	Thumbnail   string            `json:"thumbnail"`
+	Qualities   []string          `json:"qualities,omitempty"`
 }
 
 type PlayerBehavior struct {

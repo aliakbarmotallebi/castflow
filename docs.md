@@ -409,23 +409,263 @@ v/{video_id}/
 ### مثال خروجی (video `abc-123`)
 
 ```
-https://cdn.example.com/v/abc-123/hls/{variant}/master.m3u8
-https://cdn.example.com/v/abc-123/dash/{variant}/manifest.mpd
+https://cdn.example.com/v/abc-123/hls/default/a3f2b1c4/master.m3u8
+https://cdn.example.com/v/abc-123/dash/default/a3f2b1c4/manifest.mpd
 https://cdn.example.com/v/abc-123/config.json
 https://player.example.com/index.html?config=https%3A%2F%2Fcdn...
 ```
 
-### Playback Variant
+### Playback Profile + Revision
 
-وقتی تنظیمات transcode تغییر می‌کند، variant جدید ساخته می‌شود تا URLهای قدیمی نشکنند:
+#### ایدهٔ طراحی
+
+به‌جای embed کردن bitrate یا ladder کامل داخل URL (مثل `h_,360_800,720_2500,k__…`)، مسیر خروجی به دو بخش تقسیم شده:
+
+| بخش | نقش | پایدار؟ |
+|-----|-----|---------|
+| **profile** | نام معنادار پروفایل transcode | بله — تا وقتی config عوض نشود |
+| **revision** | fingerprint کوتاه تنظیمات مؤثر | فقط وقتی ladder/encoder عوض شود |
+
+این مدل سه مشکل را حل می‌کند:
+
+1. **CDN cache** — تغییر ladder → revision جدید → URL جدید → نیازی به purge دستی نیست
+2. **لینک‌های embed** — ویدیوهای قدیمی روی revision قبلی خودشان می‌مانند
+3. **چند خروجی** — یک ویدیو هم `default` (دسکتاپ) هم `mobile` (موبایل) دارد
+
+#### مسیر Storage و URL
 
 ```
-h_,360_800,720_2500,1080_5000,k__6fa82d1a
+v/{videoId}/
+├── origin.mp4
+├── config.json              ← شامل renditions[] + primary
+├── thumbnail.jpg            ← مشترک بین profileها
+├── tooltip.vtt / .png       ← مشترک
+├── hls/
+│   ├── default/
+│   │   └── {revision}/
+│   │       ├── master.m3u8
+│   │       ├── 360p/playlist.m3u8 + segments
+│   │       └── 720p/...
+│   └── mobile/
+│       └── {revision}/
+│           └── ...
+└── dash/
+    ├── default/{revision}/manifest.mpd
+    └── mobile/{revision}/manifest.mpd
 ```
 
-- بر اساس لیست quality + hash SHA256 (8 کاراکتر)
-- در DB ذخیره: `videos.playback_variant`
-- HLS/DASH در مسیر `hls/{variant}/` و `dash/{variant}/`
+URL عمومی:
+
+```
+v/{videoId}/hls/{profile}/{revision}/master.m3u8
+v/{videoId}/dash/{profile}/{revision}/manifest.mpd
+```
+
+مثال:
+
+```
+v/abc/hls/default/a3f2b1c4/master.m3u8
+v/abc/hls/mobile/deadbeef/master.m3u8
+```
+
+| بخش | معنی | مثال |
+|-----|------|------|
+| **profile** | پروفایل هدف (از env) | `default`, `mobile`, `cinema` |
+| **revision** | 8 کاراکتر اول SHA256 تنظیمات | `a3f2b1c4` |
+
+#### ساخت revision (کد)
+
+تابع `domain.BuildRevision()` در `internal/domain/variant.go`:
+
+```go
+// ورودی hash:
+payload := {
+  profile:         "default",
+  qualities:       [{name, width, height, videoBitrate, audioBitrate}, ...],  // مرتب‌شده بر height
+  hlsSegmentSec:   6,
+  thumbnailAtSec:  1.0,
+  tooltipIntervalSec: 5.0
+}
+revision = sha256(json(payload))[:8]   // مثلاً "a3f2b1c4"
+variantPath = profile + "/" + revision  // "default/a3f2b1c4"
+```
+
+نکات مهم:
+
+- **bitrate داخل URL نیست** — فقط داخل hash؛ پس URL کوتاه و خوانا می‌ماند
+- **ترتیب qualities نرمال می‌شود** (sort by height) — `720p,360p` و `360p,720p` revision یکسان می‌سازند
+- تغییر `CASTFLOW_HLS_SEGMENT_SECONDS` یا tooltip settings → revision جدید
+- تغییر bitrate یک quality → revision جدید (بدون شکستن URL قدیمی)
+
+#### تعریف profileها (config)
+
+فایل: `internal/config/profiles.go`
+
+| Env | نقش |
+|-----|-----|
+| `CASTFLOW_PLAYBACK_PROFILE` | پروفایل primary (در API و player پیش‌فرض) |
+| `CASTFLOW_PLAYBACK_PROFILES` | لیست profileهایی که روی آپلود transcode می‌شوند |
+| `CASTFLOW_PROFILE_{NAME}_QUALITIES` | ladder هر profile (مثلاً `CASTFLOW_PROFILE_MOBILE_QUALITIES`) |
+| `CASTFLOW_PROFILE_{NAME}_PLAYER_QUALITIES` | کیفیت‌های نمایش در player |
+
+پیش‌فرض `mobile` اگر env نباشد: `144p,240p,360p,480p`
+
+اگر `CASTFLOW_PLAYBACK_PROFILES` خالی باشد، فقط `CASTFLOW_PLAYBACK_PROFILE` transcode می‌شود.
+
+#### جریان transcode
+
+```
+Upload → outbox (transcode job)
+    → Worker: ProcessVideo.Execute(videoId, {profiles, force})
+        → برای هر profile در CASTFLOW_PLAYBACK_PROFILES:
+            1. revision = BuildRevision(profile + ladder + settings)
+            2. اگر !force && rendition همین revision ready است → skip
+            3. INSERT/UPDATE video_renditions (status=processing)
+            4. FFmpeg → hls/{profile}/{revision}/ + dash/{profile}/{revision}/
+            5. آپلود artifacts (thumbnail/tooltip فقط یک‌بار — profile اول)
+            6. UPDATE rendition → ready
+            7. Webhook: rendition.ready (اگر CASTFLOW_WEBHOOK_URL ست باشد)
+        → آپلود config.json با renditions[] + primary
+        → UPDATE videos.playback_variant = "{primary}/{revision}"
+        → UPDATE videos.status = ready
+```
+
+#### پایگاه داده — `video_renditions`
+
+Migration: `migrations/004_video_renditions.sql`
+
+| ستون | نوع | توضیح |
+|------|-----|-------|
+| `video_id` | UUID FK | ویدیوی والد |
+| `profile` | TEXT | مثلاً `default` |
+| `revision` | TEXT | مثلاً `a3f2b1c4` |
+| `status` | TEXT | `processing` \| `ready` \| `error` |
+| `qualities` | TEXT | `"360p,720p,1080p"` |
+| `duration_sec` | INT | مدت بعد از transcode |
+
+Constraint: `UNIQUE (video_id, profile, revision)` — یک revision مشخص فقط یک‌بار ثبت می‌شود.
+
+فیلد legacy `videos.playback_variant` همچنان primary profile path را نگه می‌دارد (`default/a3f2b1c4`) برای سازگاری با کد/API قدیمی.
+
+#### config.json (خروجی player)
+
+`URLBuilder.BuildPlayerConfig()` ساختار زیر را می‌سازد:
+
+```json
+{
+  "primary": "default",
+  "renditions": [
+    {
+      "profile": "default",
+      "revision": "a3f2b1c4",
+      "qualities": ["360p", "720p", "1080p"],
+      "source": [
+        { "src": ".../hls/default/a3f2b1c4/master.m3u8", "type": "application/x-mpegURL" },
+        { "src": ".../dash/default/a3f2b1c4/manifest.mpd", "type": "application/dash+xml" }
+      ],
+      "poster": ".../thumbnail.jpg",
+      "thumbnail": ".../tooltip.vtt"
+    },
+    {
+      "profile": "mobile",
+      "revision": "deadbeef",
+      "qualities": ["144p", "240p", "360p", "480p"],
+      "source": [ ".../hls/mobile/deadbeef/master.m3u8", ... ]
+    }
+  ],
+  "source": [ "... primary profile HLS/DASH ..." ]
+}
+```
+
+Player **URL را حدس نمی‌زند** — فقط `source` از config می‌خواند.
+
+انتخاب profile در player (`web/player/index.html`):
+
+| شرایط | profile انتخاب‌شده |
+|--------|-------------------|
+| `?profile=mobile` در URL | همان (override) |
+| دستگاه موبایل + rendition `mobile` موجود | `mobile` |
+| در غیر این صورت | `primary` از config |
+
+#### CDN / Cache
+
+| مسیر | Cache پیشنهادی |
+|------|----------------|
+| `/hls/{profile}/{revision}/*` | `max-age=31536000, immutable` — revision جدید = URL جدید |
+| `/config.json` | کوتاه (`max-age=60`) — بعد از re-transcode به‌روز می‌شود |
+| `/thumbnail.jpg`, `/tooltip.vtt` | متوسط (`max-age=86400`) |
+
+#### سازگاری عقب‌رو (ویدیوهای قدیمی)
+
+ویدیوهای transcode‌شده **قبل** از این تغییر:
+
+- مسیر قدیمی: `v/{id}/hls/{old-variant}/master.m3u8` (hash طولانی)
+- `playback_variant` در DB همان مسیر legacy را دارد
+- `video_renditions` خالی است تا re-transcode شود
+
+برای migrate: `POST /api/v1/videos/{id}/retranscode` با `{"force": true}`
+
+#### Webhook — `rendition.ready`
+
+اگر `CASTFLOW_WEBHOOK_URL` تنظیم شده باشد، بعد از ready شدن هر profile:
+
+```json
+{
+  "event": "rendition.ready",
+  "videoId": "uuid",
+  "title": "My Lecture",
+  "profile": "default",
+  "revision": "a3f2b1c4",
+  "durationSec": 421,
+  "rendition": {
+    "profile": "default",
+    "revision": "a3f2b1c4",
+    "hlsUrl": "...",
+    "dashUrl": "...",
+    "qualities": ["360p","720p","1080p"]
+  }
+}
+```
+
+Header اختیاری: `X-Castflow-Signature: sha256=<hmac>` با `CASTFLOW_WEBHOOK_SECRET`
+
+### Env پروفایل‌ها
+
+```env
+CASTFLOW_PLAYBACK_PROFILE=default
+CASTFLOW_PLAYBACK_PROFILES=default,mobile
+CASTFLOW_PROFILE_MOBILE_QUALITIES=144p,240p,360p,480p
+CASTFLOW_PROFILE_MOBILE_PLAYER_QUALITIES=360p,480p
+CASTFLOW_WEBHOOK_URL=https://example.com/hooks/castflow
+CASTFLOW_WEBHOOK_SECRET=your-webhook-secret
+```
+
+### API — renditions و re-transcode
+
+**GET /api/v1/videos/{id}/links** — فیلدهای جدید:
+
+```json
+{
+  "primary": "default",
+  "renditions": [
+    {
+      "profile": "default",
+      "revision": "a3f2b1c4",
+      "status": "ready",
+      "hlsUrl": "...",
+      "dashUrl": "...",
+      "qualities": ["360p","720p","1080p"]
+    }
+  ],
+  "links": { "...": "primary profile links (backward compat)" }
+}
+```
+
+**POST /api/v1/videos/{id}/retranscode**
+
+```json
+{ "profiles": ["default"], "force": false }
+```
 
 ---
 

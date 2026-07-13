@@ -27,5 +27,7 @@ type OutboxEvent struct {
 
 // TranscodeOutboxPayload is the JSON body for transcode events.
 type TranscodeOutboxPayload struct {
-	VideoID string `json:"videoId"`
+	VideoID  string   `json:"videoId"`
+	Profiles []string `json:"profiles,omitempty"`
+	Force    bool     `json:"force,omitempty"`
 }

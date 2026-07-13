@@ -15,7 +15,7 @@ type recordingQueue struct {
 	enqueued []uuid.UUID
 }
 
-func (q *recordingQueue) EnqueueTranscode(_ context.Context, videoID uuid.UUID) error {
+func (q *recordingQueue) EnqueueTranscode(_ context.Context, videoID uuid.UUID, _ domain.TranscodeJobOptions) error {
 	q.enqueued = append(q.enqueued, videoID)
 	return nil
 }

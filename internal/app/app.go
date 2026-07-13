@@ -31,12 +31,13 @@ func New(cfg *config.Config) (*App, error) {
 
 	uploadUC := application.NewUploadVideo(bootstrap.Repo, bootstrap.Store, bootstrap.UploadWriter, bootstrap.URLBuilder)
 	h := httpadapter.NewHandler(httpadapter.Deps{
-		Upload:   uploadUC,
-		GetVideo: application.NewGetVideo(bootstrap.Repo),
-		List:     application.NewListVideos(bootstrap.Repo),
-		Links:    application.NewGetVideoLinks(bootstrap.Repo, bootstrap.URLBuilder),
-		Delete:   application.NewDeleteVideo(bootstrap.Repo, bootstrap.Store),
-		APIKey:   cfg.APIKey,
+		Upload:      uploadUC,
+		GetVideo:    application.NewGetVideo(bootstrap.Repo),
+		List:        application.NewListVideos(bootstrap.Repo),
+		Links:       application.NewGetVideoLinks(bootstrap.Repo, bootstrap.Renditions, bootstrap.URLBuilder, cfg.Playback),
+		Delete:      application.NewDeleteVideo(bootstrap.Repo, bootstrap.Renditions, bootstrap.Store),
+		Retranscode: bootstrap.RetranscodeVideo,
+		APIKey:      cfg.APIKey,
 	})
 
 	root := http.NewServeMux()
@@ -88,6 +89,7 @@ func (a *App) Run() error {
 		slog.Info("castflow listening", "addr", a.cfg.HTTPAddr)
 		slog.Info("cdn base", "url", a.cfg.CDNBaseURL)
 		slog.Info("player base", "url", a.cfg.PlayerBaseURL)
+		slog.Info("playback profiles", "primary", a.cfg.Playback.PrimaryProfile, "profiles", a.cfg.Playback.ProfileNames())
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "err", err)
 			os.Exit(1)
